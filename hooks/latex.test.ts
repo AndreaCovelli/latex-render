@@ -104,3 +104,10 @@ test('the space after a command name is not math, as in TeX', () => {
   expect(inlineMath('\\lim_{x \\to 0} f')).toBe('lim_(x → 0) f')
   expect(inlineMath('\\lim_{x\\to0} f')).toBe('lim_(x→0) f')
 })
+
+test('text after a display block drawn mid-sentence starts its line with no space', () => {
+  expect(renderMath('roots $$x = \\frac{a}{b}$$ and more')).toBe('roots \n```\n     a\nx = ───\n     b\n```\nand more')
+  expect(renderMath('a $$\\foo{x}$$ b')).toBe('a \n```\n$$\\foo{x}$$\n```\nb')
+  expect(renderMath('a $$x + y$$ b')).toBe('a x + y b')
+  expect(renderMath('$$\\frac{a}{b}$$\nnext')).toBe('```\n a\n───\n b\n```\n\nnext')
+})

@@ -943,24 +943,30 @@ const escapeMd = (s: string) => s.replace(/[\\`*_[\]<>|~#]/g, '\\$&')
 
 // Inline: $...$ with no space inside its edges, a closing $ not followed by a
 // digit ("$5 and $10" is money, not math), or \(...\).
-const MATH = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<![\\$\w])\$(?![\s$])((?:\\\$|[^$\n])+?)(?<![\s\\])\$(?![\d$\w])/g
+const MATH = /\$\$([\s\S]+?)\$\$([ \t]*)|\\\[([\s\S]+?)\\\]([ \t]*)|\\\(([\s\S]+?)\\\)|(?<![\\$\w])\$(?![\s$])((?:\\\$|[^$\n])+?)(?<![\s\\])\$(?![\d$\w])/g
 
 function renderSpan(text: string): string {
-  return text.replace(MATH, (all, d1, d2, i1, i2, offset: number, src: string) => {
+  return text.replace(MATH, (all, d1, t1, d2, t2, i1, i2, offset: number, src: string) => {
     const display = d1 ?? d2
+    // The spaces after a display block: kept if it stays on its line, dropped
+    // if it becomes a code block, where the text after it starts a new line.
+    const trail: string = t1 ?? t2 ?? ''
+    const source = all.slice(0, all.length - trail.length)
     const lineStart = src.lastIndexOf('\n', offset - 1) + 1
     const indent = /^[ \t]*/.exec(src.slice(lineStart))![0]
     const alone = src.slice(lineStart, offset).trim() === ''
+    const rest = offset + all.length < src.length && src[offset + all.length] !== '\n'
     const fenced = (lines: string[]) =>
-      (alone ? '' : '\n' + indent) + ['```', ...lines, '```'].map((l, k) => (k === 0 && alone ? l : indent + l)).join('\n') + '\n'
+      (alone ? '' : '\n' + indent) + ['```', ...lines, '```'].map((l, k) => (k === 0 && alone ? l : indent + l)).join('\n') + '\n' +
+      (rest ? indent : '')
     try {
       if (display === undefined) return escapeMd(inlineMath(i1 ?? i2))
       const lines = drawDisplay(display.trim())
-      return lines.length === 1 ? escapeMd(lines[0]!.trim()) : fenced(lines)
+      return lines.length === 1 ? escapeMd(lines[0]!.trim()) + trail : fenced(lines)
     } catch {
       // Something it does not know: the source as written, which markdown
       // would otherwise strip of its backslashes (\, and \\).
-      return display === undefined ? escapeMd(all) : fenced(all.split('\n'))
+      return display === undefined ? escapeMd(all) : fenced(source.split('\n'))
     }
   })
 }

@@ -34,11 +34,22 @@ What it leaves alone:
 
 ## Install
 
-Inside Claude Code, for a session:
+At the prompt of a Claude Code terminal session:
 
 ```
-claude --plugin-dir /path/to/latex-render
+/plugin install latex-render --marketplace AndreaCovelli/latex-render
 ```
+
+Answer `y` to add the marketplace, then pick a scope (user, the first, makes
+it load in every session). From a shell:
+
+```
+claude plugin install latex-render --marketplace AndreaCovelli/latex-render
+```
+
+Requires a Claude Code version that runs mods (function-hook plugins); it was
+built on 2.1.316. To try a local checkout for one session:
+`claude --plugin-dir /path/to/latex-render`.
 
 Claude only writes LaTeX when it has a reason to. A line like this in your
 `CLAUDE.md` makes it a habit:

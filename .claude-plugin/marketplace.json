@@ -1,0 +1,5 @@
+{
+  "name": "latex-render",
+  "owner": { "name": "Andrea Covelli" },
+  "plugins": [{ "name": "latex-render", "source": "./" }]
+}

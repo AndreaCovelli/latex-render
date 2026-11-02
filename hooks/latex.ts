@@ -5,9 +5,17 @@
 // math that needs several lines (fractions, matrices, cases) becomes a fenced
 // block, so the terminal keeps its alignment.
 
+import { OPERATOR_CHARS, PORTED_SYMBOLS } from './symbols.ts'
+
 // ---------------------------------------------------------------- tables
 
-const SYMBOLS: Record<string, string> = {
+// Spacing the source asked for (\quad, \hspace, \phantom): tidy() collapses
+// runs of spaces but not these, which become spaces on output.
+const NBSP = '\u00a0'
+const unbreak = (s: string) => s.replace(/\u00a0/g, ' ')
+
+// Our own entries, which override the ported table in symbols.ts.
+const OWN_SYMBOLS: Record<string, string> = {
   // Greek
   alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
   zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
@@ -50,12 +58,30 @@ const SYMBOLS: Record<string, string> = {
   because: '∵', ldots: '…', dots: '…', cdots: '⋯', vdots: '⋮', ddots: '⋱',
   dotsc: '…', dotsb: '⋯', langle: '⟨', rangle: '⟩', lceil: '⌈', rceil: '⌉',
   lfloor: '⌊', rfloor: '⌋', vert: '|', Vert: '‖', lvert: '|', rvert: '|',
-  lVert: '‖', rVert: '‖', backslash: '∖', lbrace: '{', rbrace: '}',
+  lVert: '‖', rVert: '‖', backslash: '\\', lbrace: '{', rbrace: '}',
   imath: 'ı', jmath: 'ȷ', S: '§', P: '¶', copyright: '©', dag: '†',
-  // spacing
-  quad: '  ', qquad: '    ', enspace: ' ', thinspace: ' ', medspace: ' ',
+  Longleftrightarrow: '⟺', longleftrightarrow: '⟷', l: 'ł', L: 'Ł', aa: 'å', AA: 'Å',
+  // spacing: \quad and \qquad in no-break spaces (NBSP), which tidy() keeps
+  quad: NBSP.repeat(2), qquad: NBSP.repeat(4), enspace: ' ', thinspace: ' ', medspace: ' ',
   thickspace: ' ', negthinspace: '', space: ' ',
 }
+
+const SYMBOLS: Record<string, string> = { ...PORTED_SYMBOLS, ...OWN_SYMBOLS }
+
+// Relations and binary operators, which get a space on each side.
+const OPERATORS = new Set([...OPERATOR_CHARS, ...'≤≥≠≈≡∼≃≅∝≪≫⊂⊃⊆⊇∈∉→←↔⇒⇐⇔⟹⟸⟺↦±×÷·∪∩∧∨'])
+const isOperator = (s: string) => OPERATORS.has(Array.from(s)[0] ?? '')
+
+// \not before a relation.
+const NEGATIONS: Record<string, string> = {
+  '=': '≠', '<': '≮', '>': '≯', '∈': '∉', '∋': '∌', '⊂': '⊄', '⊃': '⊅', '⊆': '⊈',
+  '⊇': '⊉', '≤': '≰', '≥': '≱', '∼': '≁', '≃': '≄', '≅': '≇', '≈': '≉', '≡': '≢',
+  '∃': '∄', '∣': '∤', '∥': '∦', '⊢': '⊬', '⊨': '⊭', '≺': '⊀', '≻': '⊁', '→': '↛',
+  '←': '↚', '⇒': '⇏', '⇔': '⇎',
+}
+
+// \stackrel{def}{=} and friends, which Unicode has as one character.
+const STACKED_EQUALS: Record<string, string> = { def: '≝', '?': '≟', '△': '≜', '∧': '≙', '⋆': '≛', m: '≞' }
 
 // Named functions LaTeX sets upright.
 const FUNCTIONS = new Set([
@@ -66,7 +92,7 @@ const FUNCTIONS = new Set([
 ])
 
 // Operators whose limits go above and below in display math.
-const LIMIT_OPS = new Set(['∑', '∏', '∐', '⋃', '⋂', '⨁', '⨂', '⋁', '⋀', '⨆',
+const LIMIT_OPS = new Set(['∑', '∏', '∐', '⋃', '⋂', '⨁', '⨂', '⨀', '⨄', '⋁', '⋀', '⨆',
   'lim', 'max', 'min', 'sup', 'inf', 'liminf', 'limsup', 'argmax', 'argmin', 'det', 'gcd', 'Pr'])
 
 const SUP: Record<string, string> = {
@@ -99,12 +125,15 @@ const ACCENTS: Record<string, string> = {
   vec: '⃗', overrightarrow: '⃗', dot: '̇', ddot: '̈',
   tilde: '̃', widetilde: '̃', check: '̌', breve: '̆',
   acute: '́', grave: '̀', underline: '̲', mathring: '̊',
+  dddot: '⃛', overleftarrow: '⃖', cancel: '̸', bcancel: '⃥', xcancel: '̸⃥', sout: '̶',
 }
+// Marks drawn on every character rather than once over the whole body.
+const PER_CHAR_MARKS = new Set(['̅', '̲', '̸', '⃥', '̸⃥', '̶'])
 
 // Unicode math alphanumerics: [capital A, small a, digit 0] (0 = none), plus holes.
 const FONTS: Record<string, { base: [number, number, number]; holes: Record<string, string> }> = {
   bb: { base: [0x1d538, 0x1d552, 0x1d7d8], holes: { C: 'ℂ', H: 'ℍ', N: 'ℕ', P: 'ℙ', Q: 'ℚ', R: 'ℝ', Z: 'ℤ' } },
-  cal: { base: [0x1d4d0, 0x1d4ea, 0], holes: {} },
+  cal: { base: [0x1d49c, 0x1d4b6, 0], holes: { B: 'ℬ', E: 'ℰ', F: 'ℱ', H: 'ℋ', I: 'ℐ', L: 'ℒ', M: 'ℳ', R: 'ℛ', e: 'ℯ', g: 'ℊ', o: 'ℴ' } },
   frak: { base: [0x1d504, 0x1d51e, 0], holes: { C: 'ℭ', H: 'ℌ', I: 'ℑ', R: 'ℜ', Z: 'ℨ' } },
   bf: { base: [0x1d400, 0x1d41a, 0x1d7ce], holes: {} },
   sf: { base: [0x1d5a0, 0x1d5ba, 0x1d7e2], holes: {} },
@@ -115,13 +144,24 @@ const FONT_COMMANDS: Record<string, string> = {
   mathbf: 'bf', bm: 'bf', boldsymbol: 'bf', textbf: 'bf', mathsf: 'sf',
   mathtt: 'tt', texttt: 'tt',
 }
-const PLAIN_COMMANDS = new Set(['mathrm', 'mathit', 'mathnormal', 'textit', 'textrm', 'emph', 'mathop', 'displaystyle', 'textstyle', 'mbox'])
+const PLAIN_COMMANDS = new Set(['mathrm', 'mathit', 'mathnormal', 'textit', 'textrm', 'emph', 'mathop', 'mathbin', 'mathrel', 'mathord', 'displaystyle', 'textstyle', 'mbox'])
 const TEXT_COMMANDS = new Set(['text', 'textrm', 'textnormal', 'mbox', 'hbox', 'textit', 'textsf'])
 const IGNORED = new Set([
   'left', 'right', 'big', 'Big', 'bigg', 'Bigg', 'bigl', 'bigr', 'Bigl', 'Bigr',
   'biggl', 'biggr', 'Biggl', 'Biggr', 'middle', 'displaystyle', 'textstyle',
-  'scriptstyle', 'limits', 'nolimits', 'nonumber', 'notag', 'label', 'tag',
+  'scriptstyle', 'scriptscriptstyle', 'limits', 'nolimits', 'nonumber', 'notag', 'label',
+  'bigm', 'Bigm', 'biggm', 'Biggm', 'mathstrut', 'strut',
 ])
+
+// \xrightarrow{f} and friends: the arrow's left end, fill and right end.
+const XARROWS: Record<string, [string, string, string]> = {
+  xrightarrow: ['', '─', '→'], xleftarrow: ['←', '─', ''], xleftrightarrow: ['←', '─', '→'],
+  xRightarrow: ['', '═', '⇒'], xLeftarrow: ['⇐', '═', ''], xLeftrightarrow: ['⇐', '═', '⇒'],
+  xmapsto: ['├', '─', '→'],
+}
+
+// A length, as a number of terminal columns: \quad (1em) is two.
+const EM: Record<string, number> = { em: 1, ex: 0.43, mu: 1 / 18, pt: 0.1, bp: 0.1, px: 0.1, mm: 0.285, cm: 2.85, in: 7.23 }
 
 // ---------------------------------------------------------------- parsing
 
@@ -135,6 +175,9 @@ type Node =
   | { t: 'lr'; l: string; r: string; body: Node }
   | { t: 'env'; name: string; rows: Node[][] }
   | { t: 'brace'; under: boolean; body: Node }
+  | { t: 'boxed'; body: Node }
+  | { t: 'phantom'; body: Node; keepW: boolean; keepH: boolean }
+  | { t: 'xarrow'; ends: [string, string, string]; above: Node; below?: Node }
   | { t: 'sep'; kind: 'row' | 'col' }
 
 // Thrown on anything the converter does not know: the span is then shown as
@@ -144,7 +187,7 @@ class Unsupported extends Error {}
 const ENVIRONMENTS = new Set([
   'matrix', 'pmatrix', 'bmatrix', 'Bmatrix', 'vmatrix', 'Vmatrix', 'smallmatrix',
   'cases', 'dcases', 'aligned', 'align', 'alignat', 'alignedat', 'gather',
-  'gathered', 'split', 'equation', 'multline', 'eqnarray', 'array',
+  'gathered', 'split', 'equation', 'multline', 'eqnarray', 'array', 'subarray',
 ])
 
 const text = (s: string, op?: boolean): Node => ({ t: 'text', s, op })
@@ -153,6 +196,8 @@ const row = (items: Node[]): Node => (items.length === 1 ? items[0]! : { t: 'row
 class Parser {
   i = 0
   src: string
+  // The \tag label, drawn at the right of display math.
+  tag: string | undefined
   constructor(src: string) { this.src = src }
 
   peek(): string { return this.src[this.i] ?? '' }
@@ -257,11 +302,9 @@ class Parser {
     if (name === 'not') {
       const next = this.readArg()
       const s = next.t === 'text' ? next.s : flat(next)
-      const negated: Record<string, string> = { '=': '≠', '∈': '∉', '⊂': '⊄', '⊆': '⊈', '≡': '≢', '∼': '≁', '<': '≮', '>': '≯', '≤': '≰', '≥': '≱', '∃': '∄' }
-      return text(negated[s] ?? s + '̸')
+      const neg = NEGATIONS[s] ?? s + '̸'
+      return text(neg, isOperator(neg))
     }
-    const sym = SYMBOLS[name]
-    if (sym !== undefined) return text(sym, /^[≤≥≠≈≡∼≃≅∝≪≫⊂⊃⊆⊇∈∉→←↔⇒⇐⇔⟹⟸⟺↦±×÷·∪∩∧∨]$/.test(sym))
     if (FUNCTIONS.has(name)) return text(name === 'bmod' ? 'mod' : name)
     if (name === 'operatorname') return text(flat(this.readArg()))
     if (name === 'frac' || name === 'dfrac' || name === 'tfrac' || name === 'cfrac') {
@@ -283,12 +326,54 @@ class Parser {
     if (mark !== undefined) return { t: 'accent', mark, body: this.readArg() }
     const font = FONT_COMMANDS[name]
     if (font !== undefined) return withFont(this.readArg(), font)
-    if (TEXT_COMMANDS.has(name)) return text(this.readRawGroup().replace(/\\([{}$%&_# ])/g, '$1'))
+    if (TEXT_COMMANDS.has(name)) return this.readText()
     if (PLAIN_COMMANDS.has(name)) return this.readArg()
     if (name === 'pmod') return row([text(' (mod '), this.readArg(), text(')')])
     if (name === 'overset' || name === 'stackrel') {
       const over = this.readArg()
-      return { t: 'scripts', base: this.readArg(), sup: over }
+      const base = this.readArg()
+      const stacked = flat(base, true).trim() === '=' ? STACKED_EQUALS[flat(over, true).trim()] : undefined
+      return stacked ? text(stacked, true) : { t: 'scripts', base, sup: over }
+    }
+    if (name === 'color') {
+      this.skipOptional()
+      this.readRawGroup()
+      return text('')
+    }
+    if (name === 'textcolor') {
+      this.skipOptional()
+      this.readRawGroup()
+      return this.readArg()
+    }
+    if (name === 'colorbox' || name === 'fcolorbox') {
+      this.skipOptional()
+      this.readRawGroup()
+      if (name === 'fcolorbox') this.readRawGroup()
+      return this.readText()
+    }
+    if (name === 'boxed') return { t: 'boxed', body: this.readArg() }
+    if (name === 'fbox') return { t: 'boxed', body: this.readText() }
+    if (name === 'phantom' || name === 'hphantom' || name === 'vphantom') {
+      return { t: 'phantom', body: this.readArg(), keepW: name !== 'vphantom', keepH: name !== 'hphantom' }
+    }
+    if (name === 'hspace' || name === 'mspace') return text(this.spaces(this.readRawGroup()))
+    if (name === 'kern' || name === 'mkern' || name === 'hskip' || name === 'mskip') {
+      const m = /^\s*(-?(?:\d+\.?\d*|\.\d+))\s*([a-z]{2})(?:\s+(?:plus|minus)\s+-?[\d.]+\s*[a-z]{2})*/.exec(this.src.slice(this.i))
+      if (!m) throw new Unsupported(`\\${name} without a length`)
+      this.i += m[0].length
+      return text(this.spaces(m[1]! + m[2]!))
+    }
+    const ends = XARROWS[name]
+    if (ends) {
+      const below = this.readOptional()
+      return { t: 'xarrow', ends, above: this.readArg(), below }
+    }
+    if (name === 'substack') return { t: 'env', name: 'substack', rows: splitRows(this.readArg()) }
+    if (name === 'tag') {
+      const starred = this.src[this.i - 1] === '*'
+      const label = this.readText()
+      this.tag = starred ? flat(label) : `(${flat(label)})`
+      return text('')
     }
     if (name === 'underset') {
       const under = this.readArg()
@@ -302,20 +387,44 @@ class Parser {
       return { t: 'lr', l, r: this.readDelim(), body }
     }
     if (IGNORED.has(name)) {
-      if (name === 'label' || name === 'tag') this.readRawGroup()
+      if (name === 'label') this.readRawGroup()
       return text('')
     }
     if (name === 'begin') {
       const env = this.readRawGroup().replace('*', '')
       if (!ENVIRONMENTS.has(env)) throw new Unsupported(`unknown environment ${env}`)
-      if (env === 'array' || env === 'alignat' || env === 'alignedat') this.readRawGroup() // column spec
+      if (env === 'array' || env === 'alignat' || env === 'alignedat' || env === 'subarray') this.readRawGroup() // column spec
       const body = this.parseRow()
       if (!this.src.startsWith('\\end', this.i)) throw new Unsupported(`unclosed ${env}`)
       this.i += 4
       if (this.readRawGroup().replace('*', '') !== env) throw new Unsupported(`mismatched \\end`)
       return { t: 'env', name: env, rows: splitRows(body) }
     }
+    // Symbols last, so no ported name can shadow a command handled above.
+    const sym = SYMBOLS[name]
+    if (sym !== undefined) return text(sym, isOperator(sym))
     throw new Unsupported(`unknown command \\${name}`)
+  }
+
+  // A text-mode group, as \text reads it.
+  readText(): Node {
+    return text(this.readRawGroup().replace(/\\([{}$%&_# ])/g, '$1'))
+  }
+
+  skipOptional() {
+    this.skipSpace()
+    if (this.peek() !== '[') return
+    const end = this.src.indexOf(']', this.i)
+    if (end < 0) throw new Unsupported('unclosed [')
+    this.i = end + 1
+  }
+
+  // A TeX length (`1em`, `-3mu`) as spaces; negative lengths give none.
+  spaces(len: string): string {
+    const m = /^\s*(-?(?:\d+\.?\d*|\.\d+))\s*([a-z]{2})\s*$/.exec(len)
+    const per = m ? EM[m[2]!] : undefined
+    if (!m || per === undefined) throw new Unsupported(`unknown length ${len}`)
+    return NBSP.repeat(Math.max(0, Math.round(Number(m[1]) * per * 2)))
   }
 
   readDelim(): string {
@@ -349,9 +458,11 @@ function splitRows(body: Node): Node[][] {
   cur().push(trimRow(cell))
   // A trailing \\ leaves an empty last row.
   const last = cur()
-  if (rows.length > 1 && last.length === 1 && flat(last[0]!) === '') rows.pop()
+  if (rows.length > 1 && last.length === 1 && isEmpty(last[0]!)) rows.pop()
   return rows
 }
+
+const isEmpty = (n: Node): boolean => (n.t === 'text' && n.s.trim() === '') || (n.t === 'row' && n.items.every(isEmpty))
 
 function trimRow(items: Node[]): Node {
   const blank = (n: Node | undefined) => n?.t === 'text' && n.s.trim() === ''
@@ -407,15 +518,26 @@ function flat(n: Node, tight = false): string {
       return root + group(body)
     }
     case 'scripts': {
-      const base = n.base.t === 'brace' ? group(flat(n.base.body, tight).trim()) : flat(n.base, tight)
-      return base + scriptText(n.sub, SUB, '_') + scriptText(n.sup, SUP, '^')
+      const scripts = scriptText(n.sub, SUB, '_') + scriptText(n.sup, SUP, '^')
+      // =\u1d48\u1d49\u1da0, not = \u1d48\u1d49\u1da0: the scripts stay on the operator.
+      if (n.base.t === 'text' && n.base.op && !tight) return spaced(n.base.s + scripts)
+      return flat(n.base, tight) + scripts
     }
-    case 'brace': return flat(n.body, tight)
+    // On one line a brace's label would read as a power or an index.
+    case 'brace': throw new Unsupported('brace inline')
     case 'accent': {
       const body = flat(n.body, tight)
       const chars = Array.from(body)
-      if (n.mark === '\u0305' || n.mark === '\u0332') return chars.map(c => c + n.mark).join('')
+      if (PER_CHAR_MARKS.has(n.mark)) return chars.map(c => (c === ' ' ? c : c + n.mark)).join('')
       return chars.length === 1 ? body + n.mark : `(${body})` + n.mark
+    }
+    case 'boxed': return `[${flat(n.body, tight).trim()}]`
+    case 'phantom': return n.keepW ? NBSP.repeat(width(flat(n.body, true))) : ''
+    case 'xarrow': {
+      const [l, fill, r] = n.ends
+      const label = flat(n.above, true).trim()
+      const arrow = l + fill + (label ? label + fill : '') + r + scriptText(n.below, SUB, '_')
+      return tight ? arrow : spaced(arrow)
     }
     case 'lr': return n.l + flat(n.body, tight).trim() + n.r
     case 'env': return flatEnv(n, tight)
@@ -427,6 +549,7 @@ function flatEnv(n: Extract<Node, { t: 'env' }>, tight: boolean): string {
   const br = BRACKETS[n.name]
   if (n.name === 'binom') return `C(${rows[0]?.[0] ?? ''}, ${rows[1]?.[0] ?? ''})`
   if (n.name === 'cases' || n.name === 'dcases') return '{ ' + rows.map(r => r.join(' ')).join('; ') + ' }'
+  if (n.name === 'substack' || n.name === 'subarray') return rows.map(r => r.join(' ')).join(', ')
   if (br) return br[0] + rows.map(r => r.join(' ')).join('; ') + br[1]
   // align, gather, split, ...: rows joined
   return rows.map(r => r.join('')).join(';  ')
@@ -537,13 +660,24 @@ function box(n: Node, tight = false): Box {
     case 'sep': return line(flat(n, tight))
     case 'row': {
       // Runs of one-line items are joined as text first, so they read as inline.
+      // An \xrightarrow brings its own spaces, so the text beside it drops its own.
       const out: Box[] = []
       let run: Node[] = []
-      const flush = () => { if (run.length) out.push(line(tidy(run.map(i => flat(i, tight)).join('')))); run = [] }
+      let afterArrow = false
+      const flush = (beforeArrow = false) => {
+        let s = tidy(run.map(i => flat(i, tight)).join(''))
+        if (afterArrow) s = s.trimStart()
+        if (beforeArrow) s = s.trimEnd()
+        if (run.length && s) out.push(line(s))
+        run = []
+      }
       for (const it of n.items) {
         const b = box(it, tight)
-        if (b.lines.length === 1) run.push(it)
-        else { flush(); out.push(b) }
+        if (b.lines.length === 1) { run.push(it); continue }
+        const isArrow = it.t === 'xarrow' && !tight
+        flush(isArrow)
+        out.push(b)
+        afterArrow = isArrow
       }
       flush()
       return hcat(out)
@@ -585,6 +719,26 @@ function box(n: Node, tight = false): Box {
       return { lines, base: (sup ? sup.lines.length : 0) + base.base, w: base.w + w }
     }
     case 'brace': return braced(box(n.body, tight), n.under)
+    case 'boxed': {
+      const body = trimBox(box(n.body, tight))
+      const rule = '─'.repeat(body.w + 2)
+      const lines = ['┌' + rule + '┐', ...body.lines.map(l => '│ ' + pad(l, body.w) + ' │'), '└' + rule + '┘']
+      return { lines, base: body.base + 1, w: body.w + 4 }
+    }
+    case 'phantom': {
+      const body = box(n.body, true)
+      const w = n.keepW ? body.w : 0
+      return n.keepH ? { lines: body.lines.map(() => ' '.repeat(w)), base: body.base, w } : line(' '.repeat(w))
+    }
+    case 'xarrow': {
+      const [l, fill, r] = n.ends
+      const above = box(n.above, true), below = n.below && box(n.below, true)
+      const len = Math.max(above.w, below?.w ?? 0) + 2
+      const arrow = line(l + fill.repeat(Math.max(1, len - width(l) - width(r))) + r)
+      const parts = [above.w ? above : undefined, arrow, below].filter((b): b is Box => !!b)
+      const b = vstack(parts, above.w ? above.lines.length : 0)
+      return tight ? b : hcat([line(' '), b, line(' ')])
+    }
     case 'accent': {
       const body = box(n.body, tight)
       return body.lines.length === 1 ? line(flat(n, tight)) : body
@@ -609,6 +763,10 @@ function trimBox(b: Box): Box {
 }
 
 function envBox(n: Extract<Node, { t: 'env' }>, tight: boolean): Box {
+  // \substack: centred lines, as under a ∑.
+  if (n.name === 'substack' || n.name === 'subarray') {
+    return vstack(n.rows.map(r => trimBox(hcat(r.map(c => box(c, true))))), 0)
+  }
   const isMatrix = n.name in BRACKETS
   const isCases = n.name === 'cases' || n.name === 'dcases'
   // An align cell keeps its edges: `&= b` starts with the space before `=`.
@@ -640,21 +798,23 @@ function envBox(n: Extract<Node, { t: 'env' }>, tight: boolean): Box {
 
 // ---------------------------------------------------------------- entry points
 
-function parse(tex: string): Node {
+function parse(tex: string): { node: Node; tag?: string } {
   const p = new Parser(tex)
-  const n = p.parseRow()
+  const node = p.parseRow()
   if (!p.done()) throw new Unsupported('unmatched \\end or \\right')
-  return n
+  return { node, tag: p.tag }
 }
 
 // Throws Unsupported on a command or environment it does not know.
 export function inlineMath(tex: string): string {
-  return tidy(flat(parse(tex))).trim()
+  return unbreak(tidy(flat(parse(tex).node)).trim())
 }
 
 // Throws Unsupported on a command or environment it does not know.
 export function displayMath(tex: string): string[] {
-  return box(parse(tex)).lines.map(l => l.replace(/\s+$/, ''))
+  const { node, tag } = parse(tex)
+  const b = box(node)
+  return (tag ? hcat([b, line('    ' + tag)]) : b).lines.map(l => unbreak(l).replace(/\s+$/, ''))
 }
 
 // Characters markdown would read as markup.

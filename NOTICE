@@ -1,0 +1,16 @@
+latex-render
+Copyright 2026 Andrea Covelli
+
+This product includes symbol data, converted to TypeScript and filtered, in
+hooks/symbols.ts, from:
+
+- markview.nvim (https://github.com/OXY2DEV/markview.nvim),
+  lua/markview/symbols.lua, Copyright the markview.nvim authors, licensed under
+  the Apache License, Version 2.0.
+- render-latex.nvim (https://github.com/techwizrd/render-latex.nvim),
+  lua/render_latex/unicode.lua, Copyright Andrea Covelli, licensed under the
+  Apache License, Version 2.0.
+
+Which of those symbols are spaced as relations and binary operators follows the
+math classes in unicode-math-table.tex from unicode-math
+(https://github.com/latex3/unicode-math), LaTeX Project Public License 1.3c.

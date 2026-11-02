@@ -1,5 +1,6 @@
 {
   "name": "latex-render",
   "owner": { "name": "Andrea Covelli" },
+  "description": "latex-render: LaTeX math in Claude's replies, drawn as Unicode in the terminal",
   "plugins": [{ "name": "latex-render", "source": "./" }]
 }

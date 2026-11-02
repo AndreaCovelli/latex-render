@@ -1,1 +1,8 @@
-{ "name": "latex-render", "version": "0.1.0", "description": "Draws LaTeX math in Claude's replies as Unicode in the terminal" }
+{
+  "name": "latex-render",
+  "version": "0.2.0",
+  "description": "Draws LaTeX math in Claude's replies as Unicode in the terminal",
+  "author": { "name": "Andrea Covelli", "url": "https://github.com/AndreaCovelli" },
+  "homepage": "https://github.com/AndreaCovelli/latex-render",
+  "license": "Apache-2.0"
+}

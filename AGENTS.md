@@ -14,14 +14,23 @@ never the stored message or what the model sees.
   it is the install name).
 - `.claude-plugin/marketplace.json`: makes the repo installable with
   `/plugin install latex-render --marketplace AndreaCovelli/latex-render`.
+- `.claude-plugin/icon.png`: the plugin icon, 1024×1024.
 - `hooks/hooks.json`: names the hooks module, `./register.ts`.
 - `hooks/register.ts`: one `ui.render` hook on `AssistantMessage`. It rewrites
   `e.props.text` on the `terminal` surface and passes everything else through
   with `next(e)`; its `.catch` falls back to `next(e)` so a converter bug can
   never blank a reply.
-- `hooks/latex.ts`: the converter. Pure: no `$` engine calls, no I/O, no
-  imports. `renderMath(markdown)` finds math outside code;
+- `hooks/latex.ts`: the converter. Pure: no `$` engine calls, no I/O; its only
+  import is `./symbols.ts`. `renderMath(markdown)` finds math outside code;
   `inlineMath(tex)` and `displayMath(tex)` convert one expression.
+- `hooks/symbols.ts`: generated, do not edit by hand. `PORTED_SYMBOLS` (about
+  2,000 names from markview.nvim and render-latex.nvim) and `OPERATOR_CHARS`
+  (the glyphs unicode-math classes as relations or binary operators).
+- `scripts/gen-symbols.mjs`: writes `hooks/symbols.ts`; its header has the
+  usage. `VERBOSE=1` lists the entries it drops (emoji, wide glyphs, names that
+  are not plain letters).
+- `LICENSE` (Apache-2.0) and `NOTICE`: keep the NOTICE credits when the ported
+  data changes source.
 - `hooks/*.test.ts(x)`: tests for `claude plugin test`.
 - `.claude-plugin/types/`: written by the engine when it loads the mod;
   git-ignored. Never edit or commit it.
@@ -50,13 +59,24 @@ Conventions to keep:
   not.
 - Width is counted in code points minus combining marks (`width()`); keep new
   glyphs single-width.
+- `tidy()` collapses runs of spaces. Spacing that must survive it (`\quad`,
+  `\hspace`, `\phantom`) is built from NBSP (U+00A0), which `unbreak()` turns
+  back into spaces at output.
+- Inline `\underbrace`/`\overbrace` throw `Unsupported`, so they show their
+  source: one line has no room for the brace.
+- The symbol lookup is the last branch of `parseCommand`, after every
+  structural command, so a ported name (the table has `sqrt`, `not`,
+  `underbrace`, `overbrace` as glyphs) can never shadow one.
 - `flat`/`box` take a second `tight` argument: never pass them to `.map`
   directly (the index would become `tight`); use `i => flat(i, tight)`.
 
 ## Adding a command
 
-- A plain symbol: add it to `SYMBOLS` (relations/operators also to the regex in
-  `parseCommand` that marks them `op` so they get spaced).
+- A plain symbol: add it to `OWN_SYMBOLS` in `latex.ts`, which overrides the
+  ported table. A glyph not already in `OPERATOR_CHARS` that should be spaced
+  as a relation or operator also goes in the extra string of `OPERATORS`.
+  To pick up upstream changes instead, regenerate `hooks/symbols.ts` with
+  `scripts/gen-symbols.mjs` and update the revisions in its header.
 - An upright function name: `FUNCTIONS`; one with limits in display: also
   `LIMIT_OPS`.
 - A font, accent or environment: `FONT_COMMANDS`, `ACCENTS`, `ENVIRONMENTS`.
@@ -73,7 +93,7 @@ Run all three before committing:
 ```
 claude plugin validate .
 claude plugin test .
-tsc -p .          # needs .claude-plugin/types, laid when the engine loads the mod
+npx -y -p typescript tsc -p .   # needs .claude-plugin/types, laid when the engine loads the mod
 ```
 
 For a quick look at output, `node` runs `hooks/latex.ts` directly (type

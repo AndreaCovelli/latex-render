@@ -1,0 +1,1 @@
+{ "name": "latex-render", "version": "0.1.0", "description": "Draws LaTeX math in Claude's replies as Unicode in the terminal" }

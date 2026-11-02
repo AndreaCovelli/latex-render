@@ -68,6 +68,11 @@ Conventions to keep:
 - The option lives in a module variable set only for one `renderMath` /
   `displayMath` call (`withOptions`); `register.ts` reads it from the
   manifest's `userConfig`.
+- Spaces after a control word (`\langle u`) are dropped, as in TeX, and
+  so is a space before a closing delimiter command (`u \rangle`). Three
+  exceptions keep a space: an operator symbol keeps the source's (spacing in
+  scripts copies the source), and function names and big operators
+  (`functionName`, `BIG_OPS`) add one before an operand (`sin x`, `∫ f`).
 - `tidy()` collapses runs of spaces. Spacing that must survive it (`\quad`,
   `\hspace`, `\phantom`) is built from NBSP (U+00A0), which `unbreak()` turns
   back into spaces at output.

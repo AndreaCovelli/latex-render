@@ -30,7 +30,7 @@ test('underbrace and overbrace draw a brace in display, and show their source in
 test('the ported table supplies symbols, with operators spaced', () => {
   expect(inlineMath('a \\lesssim b')).toBe('a ≲ b')
   expect(inlineMath('x\\boxplus y')).toBe('x ⊞ y')
-  expect(inlineMath('\\digamma \\mho')).toBe('ϝ ℧')
+  expect(inlineMath('\\digamma \\mho')).toBe('ϝ℧')
   expect(inlineMath('A \\nRightarrow B')).toBe('A ⇏ B')
   expect(inlineMath('\\not\\in')).toBe('∉')
 })
@@ -57,7 +57,7 @@ test('boxed, color, cancel, phantom and lengths', () => {
   expect(inlineMath('\\color{red} x + \\textcolor[HTML]{00FF00}{y}')).toBe('x + y')
   expect(inlineMath('\\cancel{x}')).toBe('x̸')
   expect(inlineMath('a\\phantom{xy}b')).toBe('a  b')
-  expect(inlineMath('a\\quad b')).toBe('a   b')
+  expect(inlineMath('a\\quad b')).toBe('a  b')
   expect(inlineMath('a\\hspace{2em}b')).toBe('a    b')
   expect(inlineMath('a\\kern-3mu b')).toBe('a b')
   expect(() => inlineMath('\\hspace{1furlong}')).toThrow()
@@ -90,4 +90,17 @@ test('widths are terminal columns: wide glyphs take two, ambiguous ones two on r
   expect(displayMath('\\boxed{x}', { ambiguousWide: true })).toEqual(['┌──┐', '│ x  │', '└──┘'])
   expect(displayMath('\\underbrace{a+b}_{n}', { ambiguousWide: true })).toEqual(['a + b', '╰┬╯', '  n'])
   expect(renderMath('$$\\boxed{x}$$', { ambiguousWide: true })).toBe('```\n┌──┐\n│ x  │\n└──┘\n```\n')
+})
+
+test('the space after a command name is not math, as in TeX', () => {
+  expect(inlineMath('\\langle u, v \\rangle')).toBe('⟨u, v⟩')
+  expect(inlineMath('\\lVert x \\rVert')).toBe('‖x‖')
+  expect(inlineMath('\\{ x \\mid x > 0 \\}')).toBe('{x ∣ x > 0}')
+  expect(inlineMath('\\Delta x + \\alpha \\beta')).toBe('Δx + αβ')
+  // Function names and big operators keep a space before an operand.
+  expect(inlineMath('\\sin x + \\sin(x) + \\sin^2 x + \\sin \\theta')).toBe('sin x + sin(x) + sin² x + sin θ')
+  expect(inlineMath('\\int f(x) \\, dx')).toBe('∫ f(x) dx')
+  // Operators keep it too, so spacing in scripts follows the source.
+  expect(inlineMath('\\lim_{x \\to 0} f')).toBe('lim_(x → 0) f')
+  expect(inlineMath('\\lim_{x\\to0} f')).toBe('lim_(x→0) f')
 })

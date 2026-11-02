@@ -70,7 +70,7 @@ const OWN_SYMBOLS: Record<string, string> = {
 const SYMBOLS: Record<string, string> = { ...PORTED_SYMBOLS, ...OWN_SYMBOLS }
 
 // Relations and binary operators, which get a space on each side.
-const OPERATORS = new Set([...OPERATOR_CHARS, ...'≤≥≠≈≡∼≃≅∝≪≫⊂⊃⊆⊇∈∉→←↔⇒⇐⇔⟹⟸⟺↦±×÷·∪∩∧∨'])
+const OPERATORS = new Set([...OPERATOR_CHARS, '\\', ...'≤≥≠≈≡∼≃≅∝≪≫⊂⊃⊆⊇∈∉→←↔⇒⇐⇔⟹⟸⟺↦±×÷·∪∩∧∨'])
 const isOperator = (s: string) => OPERATORS.has(Array.from(s)[0] ?? '')
 
 // \not before a relation.
@@ -92,6 +92,10 @@ const FUNCTIONS = new Set([
   'arg', 'hom', 'Pr', 'mod', 'bmod', 'argmax', 'argmin', 'tr', 'rank', 'sgn',
   'lcm',
 ])
+
+// Large operators: spaced from an operand that follows them directly.
+const BIG_OPS = new Set(['∑', '∏', '∐', '⋃', '⋂', '⨁', '⨂', '⨀', '⨄', '⋁', '⋀', '⨆',
+  '∫', '∬', '∭', '⨌', '∮', '∯', '∰', '∱', '∲', '∳'])
 
 // Operators whose limits go above and below in display math.
 const LIMIT_OPS = new Set(['∑', '∏', '∐', '⋃', '⋂', '⨁', '⨂', '⨀', '⨄', '⋁', '⋀', '⨆',
@@ -183,6 +187,14 @@ type Node =
   | { t: 'sideset'; pre: Corners; post: Corners; base: Node }
   | { t: 'sep'; kind: 'row' | 'col' }
 
+// A closing delimiter command: the space before it is not math (⟨u, v⟩).
+const CLOSER = /^\\(?:\}|(?:rangle|rVert|rvert|rceil|rfloor|rbrace|rbrack|rgroup|rmoustache)(?![A-Za-z]))/
+
+// Drops the source spaces at the end of a row being read.
+function dropSpaces(items: Node[]) {
+  for (let last = items[items.length - 1]; last?.t === 'text' && !last.s.trim(); last = items[items.length - 1]) items.pop()
+}
+
 // The scripts \sideset puts at an operator's corners.
 type Corners = { sub?: Node; sup?: Node }
 
@@ -233,6 +245,13 @@ class Parser {
     return this.src.slice(start, this.i++)
   }
 
+  // sin x, sin θ, but sin(x) and sin²: TeX's space between an operator and its operand.
+  functionName(s: string): Node {
+    this.skipSpace()
+    const rest = this.src.slice(this.i)
+    return text(/^(?:[A-Za-z0-9]|\\(?!(?:left|right|[Bb]igg?[lrm]?)(?![A-Za-z]))[A-Za-z])/.test(rest) ? s + ' ' : s)
+  }
+
   // \sideset's {_a^b} or {'}: scripts on nothing, or a prime.
   readCorners(): Corners {
     const n = this.readArg()
@@ -264,6 +283,7 @@ class Parser {
       if (stop && this.peek() === stop) { this.i++; closed = true; break }
       if (this.src.startsWith('\\end', this.i) && !/[A-Za-z]/.test(this.src[this.i + 4] ?? '')) break
       if (this.src.startsWith('\\right', this.i) && !/[A-Za-z]/.test(this.src[this.i + 6] ?? '')) break
+      if (CLOSER.test(this.src.slice(this.i, this.i + 12))) dropSpaces(items)
       const c = this.peek()
       if (c === '^' || c === '_') {
         this.i++
@@ -278,7 +298,7 @@ class Parser {
       if (this.src.startsWith('\\colon', this.i) && !/[A-Za-z]/.test(this.src[this.i + 6] ?? '')) {
         // f\colon X -> f: X, punctuation: no space before, one after.
         this.i += 6
-        while (items.length && items[items.length - 1]!.t === 'text' && !(items[items.length - 1] as { s: string }).s.trim()) items.pop()
+        dropSpaces(items)
         items.push(text(': '))
         continue
       }
@@ -316,10 +336,14 @@ class Parser {
 
   parseCommand(): Node | undefined {
     const name = this.readName()
+    // As in TeX, the spaces after a control word end it and are not math: \langle u -> ⟨u.
+    const afterName = this.i
+    if (/^[A-Za-z]/.test(name)) this.skipSpace()
     if (name === '\\') return { t: 'sep', kind: 'row' }
     if (name === ',' || name === ':' || name === '>' || name === ';' || name === ' ') return text(' ')
     if (name === '!') return text('')
     if (name === '|') return text('‖')
+    if (name === '{') { this.skipSpace(); return text('{') }
     if ('{}$%&#_'.includes(name)) return text(name)
     if (name === 'not') {
       const next = this.readArg()
@@ -327,8 +351,8 @@ class Parser {
       const neg = NEGATIONS[s] ?? s + '̸'
       return text(neg, isOperator(neg))
     }
-    if (FUNCTIONS.has(name)) return text(name === 'bmod' ? 'mod' : name)
-    if (name === 'operatorname') return text(flat(this.readArg()))
+    if (FUNCTIONS.has(name)) return this.functionName(name === 'bmod' ? 'mod' : name)
+    if (name === 'operatorname') return this.functionName(flat(this.readArg()))
     if (name === 'frac' || name === 'dfrac' || name === 'tfrac' || name === 'cfrac') {
       const num = this.readArg()
       return { t: 'frac', num, den: this.readArg() }
@@ -428,8 +452,12 @@ class Parser {
     }
     // Symbols last, so no ported name can shadow a command handled above.
     const sym = SYMBOLS[name]
-    if (sym !== undefined) return text(sym, isOperator(sym))
-    throw new Unsupported(`unknown command \\${name}`)
+    if (sym === undefined) throw new Unsupported(`unknown command \\${name}`)
+    // A big operator is spaced from an operand that follows it, as sin is: ∫ f(x).
+    if (BIG_OPS.has(sym)) return this.functionName(sym)
+    // An operator keeps the source's space after it: spacing in scripts copies the source.
+    if (isOperator(sym)) { this.i = afterName; return text(sym, true) }
+    return text(sym)
   }
 
   // A text-mode group, as \text reads it.

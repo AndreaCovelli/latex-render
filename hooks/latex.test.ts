@@ -71,3 +71,23 @@ test('extensible arrows, substack and tag', () => {
   expect(displayMath('\\sum_{\\substack{i<n \\\\ j<m}} a')).toEqual([' ∑  a', 'i<n', 'j<m'])
   expect(displayMath('x = 1 \\tag{1}')).toEqual(['x = 1     (1)'])
 })
+
+test('\\colon is punctuation, \\lcm upright, \\sideset puts scripts at the corners', () => {
+  expect(inlineMath('f \\colon X \\to Y')).toBe('f: X → Y')
+  expect(inlineMath('f\\colon A\\to B')).toBe('f: A → B')
+  expect(inlineMath('a \\coloneqq b')).toBe('a ≔ b')
+  expect(inlineMath('\\lcm(a, b)')).toBe('lcm(a, b)')
+  expect(inlineMath('\\sideset{_1^2}{_3^4}\\prod')).toBe('₁²∏₃⁴')
+  expect(displayMath("\\sideset{}{'}\\sum_{n<k} a_n")).toEqual([' ∑′ aₙ', 'n<k'])
+  expect(displayMath('\\sideset{_1^2}{_3^4}\\sum_{i=1}^{n} x')).toEqual(['  n', '₁²∑₃⁴ x', ' i=1'])
+  expect(() => inlineMath('\\sideset{a}{}\\sum')).toThrow()
+})
+
+test('widths are terminal columns: wide glyphs take two, ambiguous ones two on request', () => {
+  expect(displayMath('\\frac{\\text{日本}}{2}')).toEqual(['日本', '────', ' 2'])
+  expect(displayMath('\\boxed{x}')).toEqual(['┌───┐', '│ x │', '└───┘'])
+  // Where ─ and │ are two columns, the box keeps its sides aligned: 8 columns each.
+  expect(displayMath('\\boxed{x}', { ambiguousWide: true })).toEqual(['┌──┐', '│ x  │', '└──┘'])
+  expect(displayMath('\\underbrace{a+b}_{n}', { ambiguousWide: true })).toEqual(['a + b', '╰┬╯', '  n'])
+  expect(renderMath('$$\\boxed{x}$$', { ambiguousWide: true })).toBe('```\n┌──┐\n│ x  │\n└──┘\n```\n')
+})

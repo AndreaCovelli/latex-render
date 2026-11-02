@@ -29,6 +29,9 @@ never the stored message or what the model sees.
 - `scripts/gen-symbols.mjs`: writes `hooks/symbols.ts`; its header has the
   usage. `VERBOSE=1` lists the entries it drops (emoji, wide glyphs, names that
   are not plain letters).
+- `hooks/widths.ts`: generated, do not edit by hand. `WIDE` and `AMBIGUOUS`,
+  East_Asian_Width ranges, written by `python3 -I scripts/gen-widths.py
+  hooks/widths.ts` from the running Python's `unicodedata`.
 - `LICENSE` (Apache-2.0) and `NOTICE`: keep the NOTICE credits when the ported
   data changes source.
 - `hooks/*.test.ts(x)`: tests for `claude plugin test`.
@@ -57,8 +60,14 @@ Conventions to keep:
   operators; at the top level, binary operators and relations are spaced.
 - Text drawn into markdown goes through `escapeMd`; text in a code block does
   not.
-- Width is counted in code points minus combining marks (`width()`); keep new
-  glyphs single-width.
+- `width()` counts terminal columns: combining marks 0, `WIDE` 2, `AMBIGUOUS`
+  2 when the `ambiguousWide` option is on, else 1. Box drawing must hold under
+  both settings: draw rules with `rule(ch, cols)` (rounds up to whole glyphs),
+  and build a box whose lines carry non-ASCII glyphs with `fit(lines, base)`,
+  never with a hand-counted `w`. Use `width(s)`, never `s.length`.
+- The option lives in a module variable set only for one `renderMath` /
+  `displayMath` call (`withOptions`); `register.ts` reads it from the
+  manifest's `userConfig`.
 - `tidy()` collapses runs of spaces. Spacing that must survive it (`\quad`,
   `\hspace`, `\phantom`) is built from NBSP (U+00A0), which `unbreak()` turns
   back into spaces at output.

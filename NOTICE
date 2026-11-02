@@ -11,6 +11,10 @@ hooks/symbols.ts, from:
   lua/render_latex/unicode.lua, Copyright Andrea Covelli, licensed under the
   Apache License, Version 2.0.
 
+The width tables in hooks/widths.ts are derived from the Unicode Character
+Database (EastAsianWidth.txt, https://www.unicode.org/ucd/), Copyright Unicode,
+Inc., licensed under the Unicode License v3.
+
 Which of those symbols are spaced as relations and binary operators follows the
 math classes in unicode-math-table.tex from unicode-math
 (https://github.com/latex3/unicode-math), LaTeX Project Public License 1.3c.

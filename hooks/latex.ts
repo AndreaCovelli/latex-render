@@ -6,6 +6,7 @@
 // block, so the terminal keeps its alignment.
 
 import { OPERATOR_CHARS, PORTED_SYMBOLS } from './symbols.ts'
+import { AMBIGUOUS, WIDE } from './widths.ts'
 
 // ---------------------------------------------------------------- tables
 
@@ -89,6 +90,7 @@ const FUNCTIONS = new Set([
   'sinh', 'cosh', 'tanh', 'coth', 'log', 'ln', 'lg', 'exp', 'lim', 'liminf',
   'limsup', 'max', 'min', 'sup', 'inf', 'det', 'dim', 'ker', 'deg', 'gcd',
   'arg', 'hom', 'Pr', 'mod', 'bmod', 'argmax', 'argmin', 'tr', 'rank', 'sgn',
+  'lcm',
 ])
 
 // Operators whose limits go above and below in display math.
@@ -178,7 +180,11 @@ type Node =
   | { t: 'boxed'; body: Node }
   | { t: 'phantom'; body: Node; keepW: boolean; keepH: boolean }
   | { t: 'xarrow'; ends: [string, string, string]; above: Node; below?: Node }
+  | { t: 'sideset'; pre: Corners; post: Corners; base: Node }
   | { t: 'sep'; kind: 'row' | 'col' }
+
+// The scripts \sideset puts at an operator's corners.
+type Corners = { sub?: Node; sup?: Node }
 
 // Thrown on anything the converter does not know: the span is then shown as
 // its LaTeX source rather than a guess.
@@ -227,6 +233,15 @@ class Parser {
     return this.src.slice(start, this.i++)
   }
 
+  // \sideset's {_a^b} or {'}: scripts on nothing, or a prime.
+  readCorners(): Corners {
+    const n = this.readArg()
+    if (!flat(n, true).trim()) return {}
+    if (n.t === 'text' && /^[′″‴]$/.test(n.s)) return { sup: n }
+    if (n.t === 'scripts' && n.base.t === 'text' && !n.base.s) return { sub: n.sub, sup: n.sup }
+    throw new Unsupported('\\sideset corner')
+  }
+
   readOptional(): Node | undefined {
     this.skipSpace()
     if (this.peek() !== '[') return undefined
@@ -258,6 +273,13 @@ class Parser {
         const s: Node = last.t === 'scripts' && !(c === '^' ? last.sup : last.sub) ? last : { t: 'scripts', base: last }
         if (s.t === 'scripts') { if (c === '^') s.sup = arg; else s.sub = arg }
         items.push(s)
+        continue
+      }
+      if (this.src.startsWith('\\colon', this.i) && !/[A-Za-z]/.test(this.src[this.i + 6] ?? '')) {
+        // f\colon X -> f: X, punctuation: no space before, one after.
+        this.i += 6
+        while (items.length && items[items.length - 1]!.t === 'text' && !(items[items.length - 1] as { s: string }).s.trim()) items.pop()
+        items.push(text(': '))
         continue
       }
       if (c === "'") {
@@ -329,6 +351,10 @@ class Parser {
     if (TEXT_COMMANDS.has(name)) return this.readText()
     if (PLAIN_COMMANDS.has(name)) return this.readArg()
     if (name === 'pmod') return row([text(' (mod '), this.readArg(), text(')')])
+    if (name === 'sideset') {
+      const pre = this.readCorners(), post = this.readCorners()
+      return { t: 'sideset', pre, post, base: this.readArg() }
+    }
     if (name === 'overset' || name === 'stackrel') {
       const over = this.readArg()
       const base = this.readArg()
@@ -531,6 +557,7 @@ function flat(n: Node, tight = false): string {
       if (PER_CHAR_MARKS.has(n.mark)) return chars.map(c => (c === ' ' ? c : c + n.mark)).join('')
       return chars.length === 1 ? body + n.mark : `(${body})` + n.mark
     }
+    case 'sideset': return corners(n.pre) + flat(n.base, tight) + corners(n.post)
     case 'boxed': return `[${flat(n.body, tight).trim()}]`
     case 'phantom': return n.keepW ? NBSP.repeat(width(flat(n.body, true))) : ''
     case 'xarrow': {
@@ -587,6 +614,8 @@ function scriptText(n: Node | undefined, table: Record<string, string>, mark: st
   return script(s.replace(/−/g, '-'), table) ?? mark + (Array.from(s).length > 1 ? `(${s})` : s)
 }
 
+function corners(c: Corners) { return scriptText(c.sub, SUB, '_') + scriptText(c.sup, SUP, '^') }
+
 function isAtomic(s: string) { return Array.from(s).length <= 1 || /^[\p{L}\p{N}.]+$/u.test(s) }
 function group(s: string) { return isAtomic(s) ? s : `(${s})` }
 
@@ -595,7 +624,39 @@ function group(s: string) { return isAtomic(s) ? s : `(${s})` }
 // A block of lines; `base` is the line that sits on the text's baseline.
 type Box = { lines: string[]; base: number; w: number }
 
-const width = (s: string) => Array.from(s.replace(/[\u0300-\u036f\u20d0-\u20ff]/g, '')).length
+// Whether the terminal draws East Asian ambiguous-width characters (α, →, ─,
+// …) two columns wide. Set only for the length of one renderMath call.
+let ambiguousWide = false
+
+function inRanges(cp: number, r: readonly number[]) {
+  let lo = 0, hi = r.length / 2 - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (cp < r[mid * 2]!) hi = mid - 1
+    else if (cp > r[mid * 2 + 1]!) lo = mid + 1
+    else return true
+  }
+  return false
+}
+
+const ZERO_WIDTH = /[\p{Mn}\p{Me}\u200b-\u200f\u2060]/u
+
+// Terminal columns: combining marks take none, wide characters two.
+function width(s: string) {
+  let n = 0
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!
+    if (cp < 0xa1) { n++; continue }
+    if (ZERO_WIDTH.test(ch)) continue
+    n += inRanges(cp, WIDE) || (ambiguousWide && inRanges(cp, AMBIGUOUS)) ? 2 : 1
+  }
+  return n
+}
+
+// `ch` repeated to fill at least `cols` columns.
+const rule = (ch: string, cols: number) => ch.repeat(Math.max(1, Math.ceil(cols / width(ch))))
+// A box whose width is that of its widest line.
+const fit = (lines: string[], base: number): Box => ({ lines, base, w: Math.max(0, ...lines.map(width)) })
 const pad = (s: string, w: number) => s + ' '.repeat(Math.max(0, w - width(s)))
 const center = (s: string, w: number) => {
   const left = Math.floor((w - width(s)) / 2)
@@ -633,22 +694,24 @@ const TALL: Record<string, [string, string, string, string]> = {
 function delim(ch: string, h: number, base: number): Box {
   if (!ch) return { lines: Array(h).fill(''), base, w: 0 }
   const t = TALL[ch]
-  if (h === 1 || !t) return { lines: Array.from({ length: h }, (_, i) => (i === base ? ch : t ? t[1] : ' ')), base, w: width(ch) }
+  if (h === 1 || !t) return fit(Array.from({ length: h }, (_, i) => (i === base ? ch : t ? t[1] : ' ')), base)
   const lines = Array.from({ length: h }, (_, i) => (i === 0 ? t[0] : i === h - 1 ? t[2] : t[1]))
   if ((ch === '{' || ch === '}') && h >= 3) lines[Math.floor(h / 2)] = ch === '{' ? '⎨' : '⎬'
-  if ((ch === '⟨' || ch === '⟩') && h !== 3) return { lines: Array.from({ length: h }, (_, i) => (i === base ? ch : ' ')), base, w: 1 }
-  return { lines, base, w: 1 }
+  if ((ch === '⟨' || ch === '⟩') && h !== 3) return fit(Array.from({ length: h }, (_, i) => (i === base ? ch : ' ')), base)
+  return fit(lines, base)
 }
 
 // a + b        n
 // ╰─┬─╯  or  ╭─┴─╮
 //   n        a + b
 function braced(body: Box, under: boolean, label?: Box): Box {
-  const w = Math.max(body.w, 3)
+  // In glyphs: a terminal that draws ─ two columns wide gets half as many.
+  const cw = width('─')
+  const n = Math.max(Math.ceil(body.w / cw), 3), w = n * cw
   const inner: Box = { lines: body.lines.map(l => center(l, w)), base: body.base, w }
-  const mid = Math.floor((w - 1) / 2)
+  const mid = Math.floor((n - 1) / 2)
   const [l, tick, r] = under ? ['╰', '┬', '╯'] : ['╭', '┴', '╮']
-  const brace = line(l + '─'.repeat(mid - 1) + tick + '─'.repeat(w - mid - 2) + r)
+  const brace = line(l + '─'.repeat(mid - 1) + tick + '─'.repeat(n - mid - 2) + r)
   if (under) return vstack(label ? [inner, brace, label] : [inner, brace], inner.base)
   const parts = label ? [label, brace, inner] : [brace, inner]
   return vstack(parts, (label ? label.lines.length : 0) + 1 + inner.base)
@@ -685,29 +748,40 @@ function box(n: Node, tight = false): Box {
     case 'frac': {
       const num = trimBox(box(n.num, true)), den = trimBox(box(n.den, true))
       const w = Math.max(num.w, den.w)
-      return vstack([num, line('─'.repeat(w < 3 ? w + 2 : w)), den], num.lines.length)
+      return vstack([num, line(rule('─', w < 3 ? w + 2 : w)), den], num.lines.length)
     }
     case 'sqrt': {
       const body = box(n.body, tight)
       if (body.lines.length === 1) return line(flat(n, tight))
       const idx = n.idx ? flat(n.idx, true) : ''
       const h = body.lines.length
-      const lines = [' '.repeat(idx.length) + ' ┌' + '─'.repeat(body.w + 1)]
-      body.lines.forEach((l, i) => lines.push((i === h - 1 ? idx + '╲│' : ' '.repeat(idx.length) + ' │') + ' ' + l))
-      return { lines, base: body.base + 1, w: idx.length + 3 + body.w }
+      // Every line starts with as many columns as the last one's `idx╲│`.
+      const lead = ' '.repeat(width(idx) + width('╲'))
+      const lines = [lead + '┌' + rule('─', body.w + 1)]
+      body.lines.forEach((l, i) => lines.push((i === h - 1 ? idx + '╲' : lead) + '│ ' + l))
+      return fit(lines, body.base + 1)
     }
     case 'scripts': {
       if (n.base.t === 'brace') {
         const label = n.base.under ? n.sub : n.sup
         return braced(box(n.base.body, tight), n.base.under, label && box(label, true))
       }
-      const base = box(n.base, tight)
-      const isLimitOp = n.base.t === 'text' && LIMIT_OPS.has(n.base.s)
-      if (isLimitOp) {
+      // \sideset{_a}{'}\sum_{i}: the limits centre on the ∑, the corners beside it.
+      const side = n.base.t === 'sideset' ? n.base : undefined
+      const op = side ? side.base : n.base
+      if (op.t === 'text' && LIMIT_OPS.has(op.s)) {
+        const opBox = box(op, tight)
         const small = (m?: Node) => m && trimBox(box(m, true))
-        const parts = [small(n.sup), base, small(n.sub)].filter((b): b is Box => !!b)
-        return vstack(parts, (parts[0] !== base ? parts[0]!.lines.length : 0) + base.base)
+        const parts = [small(n.sup), opBox, small(n.sub)].filter((b): b is Box => !!b)
+        const column = vstack(parts, (parts[0] !== opBox ? parts[0]!.lines.length : 0) + opBox.base)
+        if (!side) return column
+        const pre = corners(side.pre), post = corners(side.post)
+        const off = Math.floor((column.w - opBox.w) / 2), x = Math.max(width(pre), off)
+        const lines = column.lines.map((l, k) =>
+          k === column.base ? ' '.repeat(x - width(pre)) + pre + opBox.lines[0] + post : ' '.repeat(x - off) + l)
+        return fit(lines, column.base)
       }
+      const base = box(n.base, tight)
       if (base.lines.length === 1) return line(flat(n, tight))
       const sub = n.sub && box(n.sub, true), sup = n.sup && box(n.sup, true)
       const right = [sup, sub].filter((b): b is Box => !!b)
@@ -719,11 +793,15 @@ function box(n: Node, tight = false): Box {
       return { lines, base: (sup ? sup.lines.length : 0) + base.base, w: base.w + w }
     }
     case 'brace': return braced(box(n.body, tight), n.under)
+    case 'sideset': return line(flat(n, tight))
     case 'boxed': {
       const body = trimBox(box(n.body, tight))
-      const rule = '─'.repeat(body.w + 2)
-      const lines = ['┌' + rule + '┐', ...body.lines.map(l => '│ ' + pad(l, body.w) + ' │'), '└' + rule + '┘']
-      return { lines, base: body.base + 1, w: body.w + 4 }
+      // The inside is widened to a whole number of ─, so the sides line up.
+      const cw = width('─')
+      const inner = Math.ceil((body.w + 2) / cw) * cw
+      const top = '─'.repeat(inner / cw)
+      const lines = ['┌' + top + '┐', ...body.lines.map(l => '│ ' + pad(l, inner - 2) + ' │'), '└' + top + '┘']
+      return fit(lines, body.base + 1)
     }
     case 'phantom': {
       const body = box(n.body, true)
@@ -734,7 +812,7 @@ function box(n: Node, tight = false): Box {
       const [l, fill, r] = n.ends
       const above = box(n.above, true), below = n.below && box(n.below, true)
       const len = Math.max(above.w, below?.w ?? 0) + 2
-      const arrow = line(l + fill.repeat(Math.max(1, len - width(l) - width(r))) + r)
+      const arrow = line(l + rule(fill, len - width(l) - width(r)) + r)
       const parts = [above.w ? above : undefined, arrow, below].filter((b): b is Box => !!b)
       const b = vstack(parts, above.w ? above.lines.length : 0)
       return tight ? b : hcat([line(' '), b, line(' ')])
@@ -810,8 +888,23 @@ export function inlineMath(tex: string): string {
   return unbreak(tidy(flat(parse(tex).node)).trim())
 }
 
+export type Options = {
+  // The terminal draws East Asian ambiguous-width characters two columns wide.
+  ambiguousWide?: boolean
+}
+
+function withOptions<T>(opts: Options, f: () => T): T {
+  const saved = ambiguousWide
+  ambiguousWide = opts.ambiguousWide ?? false
+  try { return f() } finally { ambiguousWide = saved }
+}
+
 // Throws Unsupported on a command or environment it does not know.
-export function displayMath(tex: string): string[] {
+export function displayMath(tex: string, opts: Options = {}): string[] {
+  return withOptions(opts, () => drawDisplay(tex))
+}
+
+function drawDisplay(tex: string): string[] {
   const { node, tag } = parse(tex)
   const b = box(node)
   return (tag ? hcat([b, line('    ' + tag)]) : b).lines.map(l => unbreak(l).replace(/\s+$/, ''))
@@ -834,7 +927,7 @@ function renderSpan(text: string): string {
       (alone ? '' : '\n' + indent) + ['```', ...lines, '```'].map((l, k) => (k === 0 && alone ? l : indent + l)).join('\n') + '\n'
     try {
       if (display === undefined) return escapeMd(inlineMath(i1 ?? i2))
-      const lines = displayMath(display.trim())
+      const lines = drawDisplay(display.trim())
       return lines.length === 1 ? escapeMd(lines[0]!.trim()) : fenced(lines)
     } catch {
       // Something it does not know: the source as written, which markdown
@@ -845,8 +938,12 @@ function renderSpan(text: string): string {
 }
 
 // Leaves fenced code blocks and `code spans` alone.
-export function renderMath(md: string): string {
+export function renderMath(md: string, opts: Options = {}): string {
   if (!/\$|\\[(\[]/.test(md)) return md
+  return withOptions(opts, () => renderMarkdown(md))
+}
+
+function renderMarkdown(md: string): string {
   const out: string[] = []
   const lines = md.split('\n')
   let fence: string | null = null

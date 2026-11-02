@@ -1,8 +1,16 @@
 {
   "name": "latex-render",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Draws LaTeX math in Claude's replies as Unicode in the terminal",
   "author": { "name": "Andrea Covelli", "url": "https://github.com/AndreaCovelli" },
   "homepage": "https://github.com/AndreaCovelli/latex-render",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "userConfig": {
+    "ambiguousWide": {
+      "type": "boolean",
+      "title": "Wide ambiguous-width symbols",
+      "description": "Turn on if your terminal draws symbols such as α, → and ─ two columns wide (a CJK locale or an \"ambiguous width: wide\" setting), so multi-line math stays aligned.",
+      "default": false
+    }
+  }
 }

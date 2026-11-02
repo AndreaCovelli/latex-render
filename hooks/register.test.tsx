@@ -26,3 +26,15 @@ test('other surfaces get the text untouched', async ($, on) => {
   expect(drawn).toBe('$x^2$')
   await ui.unmount()
 })
+
+test('the ambiguousWide setting reaches the converter', { options: { ambiguousWide: true } }, async ($, on) => {
+  let drawn = ''
+  on('ui.render', ($, e) => {
+    drawn = (e.props as { text: string }).text
+    const { Text } = $.ui.resolve(e)
+    return <Text>{drawn}</Text>
+  })
+  const ui = await $.ui.mount(MSG('terminal', '$$\\boxed{x}$$'))
+  expect(drawn).toBe('```\n┌──┐\n│ x  │\n└──┘\n```\n')
+  await ui.unmount()
+})

@@ -111,3 +111,10 @@ test('text after a display block drawn mid-sentence starts its line with no spac
   expect(renderMath('a $$x + y$$ b')).toBe('a x + y b')
   expect(renderMath('$$\\frac{a}{b}$$\nnext')).toBe('```\n a\n───\n b\n```\n\nnext')
 })
+
+test('a $ glued to a word opens math only for a script on that word', () => {
+  expect(renderMath('becomes "error$_{k+1}\\le$ error$_k$", which')).toBe('becomes "errorₖ₊₁ ≤ errorₖ", which')
+  expect(renderMath('x$^2$ and e$^{i\\pi}$')).toBe('x² and e^(iπ)')
+  expect(renderMath('a$b and c$d')).toBe('a$b and c$d')
+  expect(renderMath('perl foo$_ bar$ baz')).toBe('perl foo$_ bar$ baz')
+})

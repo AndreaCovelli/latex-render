@@ -942,8 +942,9 @@ function drawDisplay(tex: string): string[] {
 const escapeMd = (s: string) => s.replace(/[\\`*_[\]<>|~#]/g, '\\$&')
 
 // Inline: $...$ with no space inside its edges, a closing $ not followed by a
-// digit ("$5 and $10" is money, not math), or \(...\).
-const MATH = /\$\$([\s\S]+?)\$\$([ \t]*)|\\\[([\s\S]+?)\\\]([ \t]*)|\\\(([\s\S]+?)\\\)|(?<![\\$\w])\$(?![\s$])((?:\\\$|[^$\n])+?)(?<![\s\\])\$(?![\d$\w])/g
+// digit ("$5 and $10" is money, not math), or \(...\). An opening $ after a
+// letter or digit counts only before a script on that word: error$_{k+1}$.
+const MATH = /\$\$([\s\S]+?)\$\$([ \t]*)|\\\[([\s\S]+?)\\\]([ \t]*)|\\\(([\s\S]+?)\\\)|(?:(?<![\\$\w])\$(?![\s$])|(?<=[A-Za-z0-9])\$(?=[_^][^\s$]))((?:\\\$|[^$\n])+?)(?<![\s\\])\$(?![\d$\w])/g
 
 function renderSpan(text: string): string {
   return text.replace(MATH, (all, d1, t1, d2, t2, i1, i2, offset: number, src: string) => {

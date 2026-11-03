@@ -43,6 +43,8 @@ never the stored message or what the model sees.
 1. `renderMath` skips fenced blocks and code spans, then matches `$$…$$`,
    `\[…\]`, `\(…\)` and `$…$`. A `$` span needs no space inside its edges and a
    closing `$` not followed by a digit, so prices (`$5 and $10`) stay text.
+   An opening `$` right after a letter or digit counts only before a script
+   (`error$_{k+1}$`), so `a$b` stays text.
 2. `Parser` builds a small AST (`Node`). Anything it does not know (a command,
    an environment, a delimiter) or cannot parse (unbalanced braces, `\left`
    without `\right`, a stray `\end`) throws `Unsupported`.

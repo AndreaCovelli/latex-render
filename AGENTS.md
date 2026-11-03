@@ -19,9 +19,15 @@ never the stored message or what the model sees.
 - `hooks/register.ts`: one `ui.render` hook on `AssistantMessage`. It rewrites
   `e.props.text` on the `terminal` surface and passes everything else through
   with `next(e)`; its `.catch` falls back to `next(e)` so a converter bug can
-  never blank a reply.
-- `hooks/latex.ts`: the converter. Pure: no `$` engine calls, no I/O; its only
-  import is `./symbols.ts`. `renderMath(markdown)` finds math outside code;
+  never blank a reply. It also serves `/latex-render source`, which flips the
+  `showingSource` atom; the hook reads it while drawing, so a switch redraws
+  every reply. The hook cannot tell the ctrl+o transcript from the normal view
+  (`AssistantMessage` has no such prop), so it draws the same in both.
+- `types/index.d.ts`: the `$.state` contract (`showingSource`), named by
+  `types` in `plugin.json`; `claude plugin validate` checks the module against
+  it.
+- `hooks/latex.ts`: the converter. Pure: no `$` engine calls, no I/O; it imports
+  only `./symbols.ts` and `./widths.ts`. `renderMath(markdown)` finds math outside code;
   `inlineMath(tex)` and `displayMath(tex)` convert one expression.
 - `hooks/symbols.ts`: generated, do not edit by hand. `PORTED_SYMBOLS` (about
   2,000 names from markview.nvim and render-latex.nvim) and `OPERATOR_CHARS`

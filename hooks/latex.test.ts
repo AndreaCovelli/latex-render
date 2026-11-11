@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { displayMath, inlineMath, renderMath } from './latex.ts'
 import { PORTED_SYMBOLS } from './symbols.ts'
+import { AMBIGUOUS, WIDE } from './widths.ts'
 
 test('an unknown command shows the LaTeX as written, backslashes kept', () => {
   expect(renderMath('see $\\softplus(x)\\, y$ here')).toBe('see $\\\\softplus(x)\\\\, y$ here')
@@ -117,4 +118,100 @@ test('a $ glued to a word opens math only for a script on that word', () => {
   expect(renderMath('x$^2$ and e$^{i\\pi}$')).toBe('x² and e^(iπ)')
   expect(renderMath('a$b and c$d')).toBe('a$b and c$d')
   expect(renderMath('perl foo$_ bar$ baz')).toBe('perl foo$_ bar$ baz')
+})
+
+// A piece of display math draws the same wherever it sits: in a fraction, a
+// box, delimiters, a root, a brace or a matrix cell, and beside other cells.
+// Each wrapper puts the piece where a box can be stretched, centred or padded.
+test('a multi-line piece keeps its own layout inside any other construct', () => {
+  const pieces = [
+    "\\sum_{o' \\in N_k(o)} x", '\\sum_{i=1}^{n} x_i', "\\sideset{}{'}\\sum_{n<k} a_n", '\\prod_{j}^{m} y',
+    '\\lim_{x \\to 0} f', '\\max_{x \\in X} f(x)', '\\sum_{\\substack{i<n \\\\ j<m}} a',
+    '\\frac{a + b}{c}', '\\frac{\\frac{a}{b}}{c}', '\\sqrt{\\frac{a}{b}}', '\\boxed{\\frac{1}{2}}',
+    '\\left(\\frac{a}{b}\\right)^2', '\\underbrace{a + b}_{n}', 'A \\xleftarrow[g]{h} B', '\\binom{n}{k}',
+    '\\begin{pmatrix} 1 & 2 \\\\ 3 & 4 \\end{pmatrix}', '\\begin{cases} a & x > 0 \\\\ b & x \\le 0 \\end{cases}',
+  ]
+  const wide = 'w'.repeat(20)
+  const wrappers = [
+    (x: string) => `\\frac{${x}}{1}`, (x: string) => `\\frac{1}{${x}}`,
+    (x: string) => `\\frac{${x}}{${wide}}`, (x: string) => `\\frac{${wide}}{${x}}`,
+    (x: string) => `\\boxed{${x}}`, (x: string) => `\\left( ${x} \\right)`, (x: string) => `\\sqrt{${x}}`,
+    (x: string) => `\\underbrace{${x}}_{n}`, (x: string) => `\\left[ ${x} \\right]_{i}^{2}`, (x: string) => `y = ${x} + z`,
+    (x: string) => `\\begin{matrix} ${x} & q \\\\ ${wide} & q \\end{matrix}`,
+    (x: string) => `\\begin{matrix} \\sum^{n} q & ${x} \\end{matrix}`,
+    (x: string) => `\\begin{matrix} \\sum_{n} q & ${x} \\end{matrix}`,
+  ]
+  const broken: string[] = []
+  for (const ambiguousWide of [false, true]) {
+    // A line as terminal cells: a glyph two columns wide is followed by an empty cell.
+    const inRanges = (cp: number, r: readonly number[]) => r.some((lo, i) => i % 2 === 0 && cp >= lo && cp <= r[i + 1]!)
+    const cells = (l: string) => Array.from(l).flatMap(ch => {
+      const cp = ch.codePointAt(0)!
+      return cp >= 0xa1 && (inRanges(cp, WIDE) || (ambiguousWide && inRanges(cp, AMBIGUOUS))) ? [ch, ''] : [ch]
+    })
+    const blank = (n: number) => Array<string>(Math.max(0, n)).fill(' ')
+    for (const piece of pieces) {
+      const own = displayMath(piece, { ambiguousWide }).map(cells)
+      const indent = Math.min(...own.filter(l => l.some(c => c !== ' ')).map(l => l.findIndex(c => c !== ' ')))
+      const inner = own.map(l => l.slice(indent))
+      const w = Math.max(...inner.map(l => l.length))
+      const want = inner.map(l => [...l, ...blank(w - l.length)].join('|'))
+      for (const wrap of wrappers) {
+        const out = displayMath(wrap(piece), { ambiguousWide }).map(cells)
+        const at = (r: number, c: number) => want.every((l, k) => {
+          const got = out[r + k]!.slice(c, c + w)
+          return [...got, ...blank(w - got.length)].join('|') === l
+        })
+        const width = Math.max(...out.map(l => l.length))
+        let found = false
+        for (let r = 0; !found && r + want.length <= out.length; r++) for (let c = 0; !found && c < width; c++) found = at(r, c)
+        if (!found) broken.push(`${wrap(piece)}${ambiguousWide ? ' (ambiguousWide)' : ''}`)
+      }
+    }
+  }
+  expect(broken).toEqual([])
+})
+
+test('operators with limits: \\limits, \\nolimits, \\operatorname* and the space to the operand', () => {
+  const cases: [string, string[]][] = [
+    ['\\sum\\limits_{i=1}^{n} i', [' n', ' ∑  i', 'i=1']],
+    ['\\int\\limits_0^1 f', ['1', '∫ f', '0']],
+    ['\\sum\\nolimits_{i} x', ['∑ᵢ x']],
+    ['\\operatorname*{argmax}_{x} f', ['argmax f', '  x']],
+    ['\\sum_{i}x', ['∑ x', 'i']],
+    ['\\sum_{i}, x', ['∑, x', 'i']],
+    ['\\lim_{n}\\frac{1}{n}', ['     1', 'lim ───', ' n   n']],
+  ]
+  for (const [tex, want] of cases) expect(displayMath(tex)).toEqual(want)
+})
+
+test('tall bases, nested fractions and accents over several lines', () => {
+  const cases: [string, string[]][] = [
+    // Scripts sit beside the top and bottom lines, small when Unicode has the letters.
+    ['\\left(\\frac{a}{b}\\right)_i^2', ['⎛  a  ⎞²', '⎜ ─── ⎟', '⎝  b  ⎠ᵢ']],
+    ['\\left. \\frac{df}{dx} \\right|_{x=0}', [' df  │', '──── │', ' dx  │ₓ₌₀']],
+    ['\\left(\\frac{a}{b}\\right)^{\\frac{1}{2}}', ['        1', '       ───', '⎛  a  ⎞ 2', '⎜ ─── ⎟', '⎝  b  ⎠']],
+    // The main rule is longer than the one in a fraction inside it.
+    ['\\frac{\\frac{a}{b}}{c}', ['  a', ' ───', '  b', '─────', '  c']],
+    ['\\overline{\\frac{a}{b}}', ['───', ' a', '───', ' b']],
+    ['\\underline{\\frac{a}{b}}', [' a', '───', ' b', '───']],
+  ]
+  for (const [tex, want] of cases) expect(displayMath(tex)).toEqual(want)
+  expect(() => displayMath('\\hat{\\frac{a}{b}}')).toThrow()
+})
+
+test('inline: a script on a fraction or root takes parentheses; operators space as the source', () => {
+  const cases: [string, string][] = [
+    ['\\frac{a}{b}^2', '(a/b)²'], ['\\frac{a+b}{c}^2', '((a+b)/c)²'], ['\\frac{1}{2}^n', '½ⁿ'],
+    ['\\sqrt{x}^2', '(√x)²'], ['\\sqrt{2}', '√2'],
+    ['\\sum_{i\\in S} x', '∑_(i∈S) x'], ['\\sum_{i \\in S} x', '∑_(i ∈ S) x'],
+  ]
+  for (const [tex, want] of cases) expect(inlineMath(tex)).toBe(want)
+})
+
+test('display math in a list item or a quote stays in it', () => {
+  expect(renderMath('1. $$x = \\frac{1}{2}$$')).toBe('1. ```\n        1\n   x = ───\n        2\n   ```\n')
+  expect(renderMath('  - $$\\frac{a}{b}$$ tail')).toBe('  - ```\n     a\n    ───\n     b\n    ```\n    tail')
+  expect(renderMath('> $$\n> \\frac{a}{b}\n> $$\n> after')).toBe('> ```\n>  a\n> ───\n>  b\n> ```\n>\n> after')
+  expect(renderMath('> quote $$\\frac{a}{b}$$')).toBe('> quote \n> ```\n>  a\n> ───\n>  b\n> ```\n')
 })

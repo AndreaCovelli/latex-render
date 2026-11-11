@@ -172,7 +172,8 @@ const EM: Record<string, number> = { em: 1, ex: 0.43, mu: 1 / 18, pt: 0.1, bp: 0
 // ---------------------------------------------------------------- parsing
 
 type Node =
-  | { t: 'text'; s: string; op?: boolean }
+  // limits: \limits (true) or \nolimits (false) after an operator; unset, LIMIT_OPS decides.
+  | { t: 'text'; s: string; op?: boolean; limits?: boolean }
   | { t: 'row'; items: Node[] }
   | { t: 'frac'; num: Node; den: Node }
   | { t: 'sqrt'; idx?: Node; body: Node }
@@ -246,10 +247,19 @@ class Parser {
   }
 
   // sin x, sin θ, but sin(x) and sin²: TeX's space between an operator and its operand.
-  functionName(s: string): Node {
+  // A \limits or \nolimits after the name says where display math puts its scripts.
+  functionName(s: string, limits?: boolean): Node {
     this.skipSpace()
+    const m = /^\\(no)?limits(?![A-Za-z])/.exec(this.src.slice(this.i))
+    if (m) {
+      this.i += m[0].length
+      limits = !m[1]
+      this.skipSpace()
+    }
     const rest = this.src.slice(this.i)
-    return text(/^(?:[A-Za-z0-9]|\\(?!(?:left|right|[Bb]igg?[lrm]?)(?![A-Za-z]))[A-Za-z])/.test(rest) ? s + ' ' : s)
+    const n: Node = { t: 'text', s: /^(?:[A-Za-z0-9]|\\(?!(?:left|right|[Bb]igg?[lrm]?)(?![A-Za-z]))[A-Za-z])/.test(rest) ? s + ' ' : s }
+    if (limits !== undefined) n.limits = limits
+    return n
   }
 
   // \sideset's {_a^b} or {'}: scripts on nothing, or a prime.
@@ -335,6 +345,7 @@ class Parser {
   }
 
   parseCommand(): Node | undefined {
+    const spaceBefore = /\s/.test(this.src[this.i - 2] ?? '')
     const name = this.readName()
     // As in TeX, the spaces after a control word end it and are not math: \langle u -> ⟨u.
     const afterName = this.i
@@ -352,7 +363,8 @@ class Parser {
       return text(neg, isOperator(neg))
     }
     if (FUNCTIONS.has(name)) return this.functionName(name === 'bmod' ? 'mod' : name)
-    if (name === 'operatorname') return this.functionName(flat(this.readArg()))
+    // \operatorname*: limits above and below, as \lim has.
+    if (name === 'operatorname') return this.functionName(flat(this.readArg()), this.src[afterName - 1] === '*' || undefined)
     if (name === 'frac' || name === 'dfrac' || name === 'tfrac' || name === 'cfrac') {
       const num = this.readArg()
       return { t: 'frac', num, den: this.readArg() }
@@ -455,8 +467,12 @@ class Parser {
     if (sym === undefined) throw new Unsupported(`unknown command \\${name}`)
     // A big operator is spaced from an operand that follows it, as sin is: ∫ f(x).
     if (BIG_OPS.has(sym)) return this.functionName(sym)
-    // An operator keeps the source's space after it: spacing in scripts copies the source.
-    if (isOperator(sym)) { this.i = afterName; return text(sym, true) }
+    // An operator keeps the source's space after it, when it has one before it too:
+    // spacing in scripts copies the source, and `i\in S` is i∈S, not i∈ S.
+    if (isOperator(sym)) {
+      if (spaceBefore) this.i = afterName
+      return text(sym, true)
+    }
     return text(sym)
   }
 
@@ -575,7 +591,9 @@ function flat(n: Node, tight = false): string {
       const scripts = scriptText(n.sub, SUB, '_') + scriptText(n.sup, SUP, '^')
       // =\u1d48\u1d49\u1da0, not = \u1d48\u1d49\u1da0: the scripts stay on the operator.
       if (n.base.t === 'text' && n.base.op && !tight) return spaced(n.base.s + scripts)
-      return flat(n.base, tight) + scripts
+      // (a/b)², not a/b², which reads as a over b²; (√x)², not √x².
+      const base = flat(n.base, tight)
+      return ((n.base.t === 'frac' || n.base.t === 'sqrt') && !isAtomic(base) ? `(${base})` : base) + scripts
     }
     // On one line a brace's label would read as a power or an index.
     case 'brace': throw new Unsupported('brace inline')
@@ -650,6 +668,7 @@ function group(s: string) { return isAtomic(s) ? s : `(${s})` }
 // ---------------------------------------------------------------- display
 
 // A block of lines; `base` is the line that sits on the text's baseline.
+// Every line is `w` columns wide: build one with `fit`, `line`, `hcat` or `vstack`.
 type Box = { lines: string[]; base: number; w: number }
 
 // Whether the terminal draws East Asian ambiguous-width characters (α, →, ─,
@@ -683,9 +702,13 @@ function width(s: string) {
 
 // `ch` repeated to fill at least `cols` columns.
 const rule = (ch: string, cols: number) => ch.repeat(Math.max(1, Math.ceil(cols / width(ch))))
-// A box whose width is that of its widest line.
-const fit = (lines: string[], base: number): Box => ({ lines, base, w: Math.max(0, ...lines.map(width)) })
 const pad = (s: string, w: number) => s + ' '.repeat(Math.max(0, w - width(s)))
+// A box whose width is that of its widest line. Every line is padded to it:
+// vstack centres line by line, so a ragged box would lose its own alignment.
+const fit = (lines: string[], base: number): Box => {
+  const w = Math.max(0, ...lines.map(width))
+  return { lines: lines.map(l => pad(l, w)), base, w }
+}
 const center = (s: string, w: number) => {
   const left = Math.floor((w - width(s)) / 2)
   return pad(' '.repeat(Math.max(0, left)) + s, w)
@@ -752,14 +775,16 @@ function box(n: Node, tight = false): Box {
     case 'row': {
       // Runs of one-line items are joined as text first, so they read as inline.
       // An \xrightarrow brings its own spaces, so the text beside it drops its own.
+      // An operator with limits is spaced from its operand, as in TeX: ∑ x, not ∑x.
       const out: Box[] = []
       let run: Node[] = []
-      let afterArrow = false
+      let afterArrow = false, afterOp = false
       const flush = (beforeArrow = false) => {
         let s = tidy(run.map(i => flat(i, tight)).join(''))
         if (afterArrow) s = s.trimStart()
         if (beforeArrow) s = s.trimEnd()
-        if (run.length && s) out.push(line(s))
+        if (afterOp && s && !/^[\s,;.:!?)\]}⟩|‖]/.test(s)) s = ' ' + s
+        if (run.length && s) { out.push(line(s)); afterOp = false }
         run = []
       }
       for (const it of n.items) {
@@ -767,16 +792,20 @@ function box(n: Node, tight = false): Box {
         if (b.lines.length === 1) { run.push(it); continue }
         const isArrow = it.t === 'xarrow' && !tight
         flush(isArrow)
+        if (afterOp) out.push(line(' '))
         out.push(b)
         afterArrow = isArrow
+        afterOp = limitsOp(it) !== undefined
       }
       flush()
       return hcat(out)
     }
     case 'frac': {
       const num = trimBox(box(n.num, true)), den = trimBox(box(n.den, true))
-      const w = Math.max(num.w, den.w)
-      return vstack([num, line(rule('─', w < 3 ? w + 2 : w)), den], num.lines.length)
+      // A rule as wide as a fraction inside it would leave which one is the main
+      // fraction ambiguous: it then reaches one column past each side.
+      const w = Math.max(num.w, den.w), nested = num.lines.length > 1 || den.lines.length > 1
+      return vstack([num, line(rule('─', w < 3 || nested ? w + 2 : w)), den], num.lines.length)
     }
     case 'sqrt': {
       const body = box(n.body, tight)
@@ -796,8 +825,8 @@ function box(n: Node, tight = false): Box {
       }
       // \sideset{_a}{'}\sum_{i}: the limits centre on the ∑, the corners beside it.
       const side = n.base.t === 'sideset' ? n.base : undefined
-      const op = side ? side.base : n.base
-      if (op.t === 'text' && LIMIT_OPS.has(op.s)) {
+      const op = limitsOp(n)
+      if (op) {
         const opBox = box(op, tight)
         const small = (m?: Node) => m && trimBox(box(m, true))
         const parts = [small(n.sup), opBox, small(n.sub)].filter((b): b is Box => !!b)
@@ -811,14 +840,25 @@ function box(n: Node, tight = false): Box {
       }
       const base = box(n.base, tight)
       if (base.lines.length === 1) return line(flat(n, tight))
-      const sub = n.sub && box(n.sub, true), sup = n.sup && box(n.sup, true)
-      const right = [sup, sub].filter((b): b is Box => !!b)
+      // On a tall base, as in TeX: the superscript ends on its top line, the
+      // subscript starts on its bottom line (⎛a⎞² … ⎝b⎠ᵢ, or the bar of f(x)|ₓ₌₀).
+      // A script Unicode has small letters for is drawn with them: ⎞², not ⎞2.
+      const small = (m: Node | undefined, table: Record<string, string>) => {
+        if (!m) return undefined
+        const b = box(m, true)
+        const s = b.lines.length === 1 ? script(flat(m, true).trim().replace(/−/g, '-'), table) : undefined
+        return s === undefined ? b : line(s)
+      }
+      const sub = small(n.sub, SUB), sup = small(n.sup, SUP)
+      const w = Math.max(sup?.w ?? 0, sub?.w ?? 0)
+      const above = sup ? sup.lines.length - 1 : 0, h = base.lines.length
+      const below = sub ? sub.lines.length - 1 : 0
       const lines: string[] = []
-      const w = Math.max(...right.map(b => b.w))
-      if (sup) sup.lines.forEach(l => lines.push(pad('', base.w) + pad(l, w)))
-      base.lines.forEach(l => lines.push(pad(l, base.w) + ' '.repeat(w)))
-      if (sub) sub.lines.forEach(l => lines.push(pad('', base.w) + pad(l, w)))
-      return { lines, base: (sup ? sup.lines.length : 0) + base.base, w: base.w + w }
+      for (let r = 0; r < above + h + below; r++) {
+        const right = sup?.lines[r] ?? sub?.lines[r - above - h + 1] ?? ''
+        lines.push(pad(base.lines[r - above] ?? '', base.w) + pad(right, w))
+      }
+      return { lines, base: above + base.base, w: base.w + w }
     }
     case 'brace': return braced(box(n.body, tight), n.under)
     case 'sideset': return line(flat(n, tight))
@@ -847,16 +887,29 @@ function box(n: Node, tight = false): Box {
     }
     case 'accent': {
       const body = box(n.body, tight)
-      return body.lines.length === 1 ? line(flat(n, tight)) : body
+      if (body.lines.length === 1) return line(flat(n, tight))
+      // A line over or under several lines is a rule; other marks have no tall form.
+      const r = line(rule('─', body.w))
+      if (n.mark === ACCENTS.overline || n.mark === ACCENTS.bar) return vstack([r, body], body.base + 1)
+      if (n.mark === ACCENTS.underline) return vstack([body, r], body.base)
+      throw new Unsupported('accent over several lines')
     }
     case 'lr': {
       const body = trimBox(box(n.body, tight))
       const h = body.lines.length
-      const gap = h > 1 ? [line(' ')] : []
-      return hcat([delim(n.l, h, body.base), ...gap, body, ...gap, delim(n.r, h, body.base)])
+      // A tall delimiter stands a space off the body; \left. draws none, so no space.
+      const gap = (d: string) => (h > 1 && d ? [line(' ')] : [])
+      return hcat([delim(n.l, h, body.base), ...gap(n.l), body, ...gap(n.r), delim(n.r, h, body.base)])
     }
     case 'env': return envBox(n, tight)
   }
+}
+
+// The operator of `n` when display math puts its scripts above and below it.
+function limitsOp(n: Node): Extract<Node, { t: 'text' }> | undefined {
+  if (n.t !== 'scripts') return undefined
+  const op = n.base.t === 'sideset' ? n.base.base : n.base
+  return op.t === 'text' && (op.limits ?? LIMIT_OPS.has(op.s)) ? op : undefined
 }
 
 // Drops the blank columns a box has at both sides.
@@ -864,8 +917,7 @@ function trimBox(b: Box): Box {
   const used = b.lines.filter(l => l.trim())
   if (!used.length) return b
   const left = Math.min(...used.map(l => width(l) - width(l.trimStart())))
-  const lines = b.lines.map(l => Array.from(l).slice(left).join('').trimEnd())
-  return { lines, base: b.base, w: Math.max(...lines.map(width)) }
+  return fit(b.lines.map(l => Array.from(l).slice(left).join('').trimEnd()), b.base)
 }
 
 function envBox(n: Extract<Node, { t: 'env' }>, tight: boolean): Box {
@@ -885,8 +937,9 @@ function envBox(n: Extract<Node, { t: 'env' }>, tight: boolean): Box {
     isMatrix ? center(s, colW[c]!) : !isCases && c % 2 === 0 && cols > 1 ? ' '.repeat(colW[c]! - width(s)) + s : pad(s, colW[c]!)
   const lines: string[] = []
   for (const r of cells) {
-    const h = Math.max(...r.map(b => b.lines.length))
+    // Cells sit on one baseline: the row is as tall as the most above it plus the most below.
     const top = Math.max(...r.map(b => b.base))
+    const h = top + 1 + Math.max(...r.map(b => b.lines.length - 1 - b.base))
     for (let k = 0; k < h; k++) {
       lines.push(r.map((b, c) => gap(c) + align(b.lines[k - top + b.base] ?? '', c)).join(''))
     }
@@ -946,23 +999,37 @@ const escapeMd = (s: string) => s.replace(/[\\`*_[\]<>|~#]/g, '\\$&')
 // letter or digit counts only before a script on that word: error$_{k+1}$.
 const MATH = /\$\$([\s\S]+?)\$\$([ \t]*)|\\\[([\s\S]+?)\\\]([ \t]*)|\\\(([\s\S]+?)\\\)|(?:(?<![\\$\w])\$(?![\s$])|(?<=[A-Za-z0-9])\$(?=[_^][^\s$]))((?:\\\$|[^$\n])+?)(?<![\s\\])\$(?![\d$\w])/g
 
+// The start of a line that belongs to markdown, not to its text: indentation,
+// quote marks and list markers.
+const LINE_LEAD = /^[ \t]*(?:(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])[ \t]+)[ \t]*)*/
+
 function renderSpan(text: string): string {
   return text.replace(MATH, (all, d1, t1, d2, t2, i1, i2, offset: number, src: string) => {
     const display = d1 ?? d2
     // The spaces after a display block: kept if it stays on its line, dropped
     // if it becomes a code block, where the text after it starts a new line.
     const trail: string = t1 ?? t2 ?? ''
-    const source = all.slice(0, all.length - trail.length)
     const lineStart = src.lastIndexOf('\n', offset - 1) + 1
-    const indent = /^[ \t]*/.exec(src.slice(lineStart))![0]
-    const alone = src.slice(lineStart, offset).trim() === ''
+    // What a line inside the block must start with to stay in the list item or
+    // quote it began in: `> ` stays, a list marker (`- `, `1. `) becomes spaces.
+    const lead = LINE_LEAD.exec(src.slice(lineStart, offset))![0]
+    const indent = lead.replace(/(?:[-*+]|\d{1,9}[.)])(?=[ \t])/g, m => ' '.repeat(m.length))
+    // In a quote, the lines of the math carry the quote's `>` too: they are not math.
+    const quotes = (indent.match(/>/g) ?? []).length
+    const unquote = (s: string) =>
+      quotes ? s.replace(new RegExp(`\n[ \t]*(?:>[ \t]?){0,${quotes}}`, 'g'), '\n') : s
+    const source = unquote(all.slice(0, all.length - trail.length))
+    const alone = src.slice(lineStart + lead.length, offset).trim() === ''
     const rest = offset + all.length < src.length && src[offset + all.length] !== '\n'
+    // The opening fence goes right after the lead when nothing else is before it.
+    // The blank line after the block keeps a quote's `>`, so the quote goes on.
+    const more = offset + all.length < src.length
     const fenced = (lines: string[]) =>
-      (alone ? '' : '\n' + indent) + ['```', ...lines, '```'].map((l, k) => (k === 0 && alone ? l : indent + l)).join('\n') + '\n' +
-      (rest ? indent : '')
+      (alone ? '' : '\n' + indent) + ['```', ...lines, '```'].map((l, k) => (k === 0 ? l : indent + l)).join('\n') + '\n' +
+      (rest ? indent : quotes && more ? indent.trimEnd() : '')
     try {
       if (display === undefined) return escapeMd(inlineMath(i1 ?? i2))
-      const lines = drawDisplay(display.trim())
+      const lines = drawDisplay(unquote(display).trim())
       return lines.length === 1 ? escapeMd(lines[0]!.trim()) + trail : fenced(lines)
     } catch {
       // Something it does not know: the source as written, which markdown

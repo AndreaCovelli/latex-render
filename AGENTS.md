@@ -73,6 +73,8 @@ Conventions to keep:
   both settings: draw rules with `rule(ch, cols)` (rounds up to whole glyphs),
   and build a box whose lines carry non-ASCII glyphs with `fit(lines, base)`,
   never with a hand-counted `w`. Use `width(s)`, never `s.length`.
+- Every line of a `Box` is `w` columns wide. `vstack` centres line by line, so
+  a ragged box loses its own alignment (a ∑'s limit drifts off the ∑).
 - The option lives in a module variable set only for one `renderMath` /
   `displayMath` call (`withOptions`); `register.ts` reads it from the
   manifest's `userConfig`.
@@ -107,6 +109,9 @@ Conventions to keep:
 
 Add a test in `hooks/latex.test.ts` for each new construct, inline and
 display.
+A new multi-line construct also goes in the pieces of the test "a multi-line
+piece keeps its own layout inside any other construct", and a new way of
+holding one (a stretched, centred or padded box) in its wrappers.
 
 ## Checks
 

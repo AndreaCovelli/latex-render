@@ -130,6 +130,8 @@ test('a multi-line piece keeps its own layout inside any other construct', () =>
     '\\frac{a + b}{c}', '\\frac{\\frac{a}{b}}{c}', '\\sqrt{\\frac{a}{b}}', '\\boxed{\\frac{1}{2}}',
     '\\left(\\frac{a}{b}\\right)^2', '\\underbrace{a + b}_{n}', 'A \\xleftarrow[g]{h} B', '\\binom{n}{k}',
     '\\begin{pmatrix} 1 & 2 \\\\ 3 & 4 \\end{pmatrix}', '\\begin{cases} a & x > 0 \\\\ b & x \\le 0 \\end{cases}',
+    '\\left\\langle \\begin{matrix} a \\\\ b \\end{matrix} \\right\\rangle', '\\cancel{\\frac{a}{b}}',
+    '\\text{if $\\frac{a}{b} > 0$}', '\\begin{gathered} a = b \\\\ c + d = \\frac{e}{f} \\end{gathered}',
   ]
   const wide = 'w'.repeat(20)
   const wrappers = [
@@ -143,9 +145,10 @@ test('a multi-line piece keeps its own layout inside any other construct', () =>
   ]
   const broken: string[] = []
   for (const ambiguousWide of [false, true]) {
-    // A line as terminal cells: a glyph two columns wide is followed by an empty cell.
+    // A line as terminal cells: a glyph two columns wide is followed by an empty cell,
+    // and a combining mark joins the cell of the glyph it is on.
     const inRanges = (cp: number, r: readonly number[]) => r.some((lo, i) => i % 2 === 0 && cp >= lo && cp <= r[i + 1]!)
-    const cells = (l: string) => Array.from(l).flatMap(ch => {
+    const cells = (l: string) => (l.match(/\P{M}\p{M}*/gu) ?? []).flatMap(ch => {
       const cp = ch.codePointAt(0)!
       return cp >= 0xa1 && (inRanges(cp, WIDE) || (ambiguousWide && inRanges(cp, AMBIGUOUS))) ? [ch, ''] : [ch]
     })
@@ -214,4 +217,28 @@ test('display math in a list item or a quote stays in it', () => {
   expect(renderMath('  - $$\\frac{a}{b}$$ tail')).toBe('  - ```\n     a\n    ───\n     b\n    ```\n    tail')
   expect(renderMath('> $$\n> \\frac{a}{b}\n> $$\n> after')).toBe('> ```\n>  a\n> ───\n>  b\n> ```\n>\n> after')
   expect(renderMath('> quote $$\\frac{a}{b}$$')).toBe('> quote \n> ```\n>  a\n> ───\n>  b\n> ```\n')
+})
+
+test('display: \\\\ breaks lines, gather centres, ⟨⟩ at any height, $ inside \\text, \\tfrac, \\cancel', () => {
+  const cases: [string, string[]][] = [
+    ['a \\\\ b + c', ['  a', 'b + c']],
+    ['a &= b \\\\ c + d &= e', ['    a = b', 'c + d = e']],
+    ['\\begin{gather} a \\\\ b + c \\end{gather}', ['  a', 'b + c']],
+    ['\\left\\langle \\begin{matrix} a \\\\ b \\end{matrix} \\right\\rangle', ['╱ a ╲', '╲ b ╱']],
+    ['\\left\\langle \\frac{a}{b} \\right\\rangle', ['╱  a  ╲', '⟨ ─── ⟩', '╲  b  ╱']],
+    ['\\text{if $\\frac{a}{b}$}', ['    a', 'if ───', '    b']],
+    ['x = \\tfrac{a}{b}', ['x = a/b']],
+    ['\\cancel{\\frac{a}{b}}', [' a̸', '─̸─̸─̸', ' b̸']],
+  ]
+  for (const [tex, want] of cases) expect(displayMath(tex)).toEqual(want)
+})
+
+test('inline: transposes, gradients, partials, a script before a word, $ before an ordinal suffix', () => {
+  const cases: [string, string][] = [
+    ['A^\\top', 'Aᵀ'], ['\\nabla_\\theta J(\\theta)', '∇_θ J(θ)'], ['\\frac{\\partial L}{\\partial w}', '∂L/∂w'],
+    ['x_{\\alpha -1}', 'x_(α−1)'], ['\\text{if $x_1 > 0$}', 'if x₁ > 0'], ['\\text{costs \\$5}', 'costs $5'],
+  ]
+  for (const [tex, want] of cases) expect(inlineMath(tex)).toBe(want)
+  expect(renderMath('the $k$th entry')).toBe('the kth entry')
+  expect(renderMath('a$b and c$d')).toBe('a$b and c$d')
 })

@@ -110,7 +110,7 @@ const SUP: Record<string, string> = {
   A: 'ᴬ', B: 'ᴮ', D: 'ᴰ', E: 'ᴱ', G: 'ᴳ', H: 'ᴴ', I: 'ᴵ', J: 'ᴶ', K: 'ᴷ', L: 'ᴸ',
   M: 'ᴹ', N: 'ᴺ', O: 'ᴼ', P: 'ᴾ', R: 'ᴿ', T: 'ᵀ', U: 'ᵁ', V: 'ⱽ', W: 'ᵂ',
   'α': 'ᵅ', 'β': 'ᵝ', 'γ': 'ᵞ', 'δ': 'ᵟ', 'ε': 'ᵋ', 'ϵ': 'ᵋ', 'θ': 'ᶿ', 'ι': 'ᶥ',
-  'ϕ': 'ᵠ', 'φ': 'ᵠ', 'χ': 'ᵡ', ' ': ' ', ',': '˒', '′': '′', '*': '*', '∗': '*',
+  'ϕ': 'ᵠ', 'φ': 'ᵠ', 'χ': 'ᵡ', ' ': ' ', ',': '˒', '′': '′', '*': '*', '∗': '*', '⊤': 'ᵀ',
 }
 const SUB: Record<string, string> = {
   '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇',
@@ -175,7 +175,7 @@ type Node =
   // limits: \limits (true) or \nolimits (false) after an operator; unset, LIMIT_OPS decides.
   | { t: 'text'; s: string; op?: boolean; limits?: boolean }
   | { t: 'row'; items: Node[] }
-  | { t: 'frac'; num: Node; den: Node }
+  | { t: 'frac'; num: Node; den: Node; inline?: boolean }
   | { t: 'sqrt'; idx?: Node; body: Node }
   | { t: 'scripts'; base: Node; sub?: Node; sup?: Node }
   | { t: 'accent'; mark: string; body: Node }
@@ -319,7 +319,14 @@ class Parser {
         items.push(text(n === 2 ? '″' : n === 3 ? '‴' : '′'.repeat(n)))
         continue
       }
+      const start = this.i
       const atom = this.parseAtom()
+      // `\alpha = 1`: the space before = ended \alpha, so it is not in items. An
+      // operator with a space on both sides in the source gets it back (α = 1);
+      // `\alpha -1` stays α−1.
+      const last = items[items.length - 1]
+      const both = /\s/.test(this.src[start - 1] ?? '') && /\s/.test(this.peek())
+      if (atom?.t === 'text' && atom.op && both && last && !(last.t === 'text' && !last.s.trim())) items.push(text(' '))
       if (atom) items.push(atom)
     }
     if (!closed) throw new Unsupported(`unclosed ${stop}`)
@@ -367,7 +374,7 @@ class Parser {
     if (name === 'operatorname') return this.functionName(flat(this.readArg()), this.src[afterName - 1] === '*' || undefined)
     if (name === 'frac' || name === 'dfrac' || name === 'tfrac' || name === 'cfrac') {
       const num = this.readArg()
-      return { t: 'frac', num, den: this.readArg() }
+      return { t: 'frac', num, den: this.readArg(), ...(name === 'tfrac' && { inline: true }) }
     }
     if (name === 'binom' || name === 'dbinom' || name === 'tbinom') {
       const n = this.readArg()
@@ -477,8 +484,19 @@ class Parser {
   }
 
   // A text-mode group, as \text reads it.
+  // `$…$` inside it is math again: \text{if $x > 0$}.
   readText(): Node {
-    return text(this.readRawGroup().replace(/\\([{}$%&_# ])/g, '$1'))
+    const unescape = (s: string) => s.replace(/\\([{}$%&_# ])/g, '$1')
+    const raw = this.readRawGroup()
+    const parts = raw.split(/(?<!\\)\$/)
+    if (parts.length < 3 || parts.length % 2 === 0) return text(unescape(raw))
+    return row(parts.map((p, k) => {
+      if (k % 2 === 0) return text(unescape(p))
+      const inner = new Parser(p)
+      const n = inner.parseRow()
+      if (!inner.done()) throw new Unsupported('unmatched \\end or \\right')
+      return n
+    }))
   }
 
   skipOptional() {
@@ -573,7 +591,7 @@ function flat(n: Node, tight = false): string {
   switch (n.t) {
     case 'text': return n.op && !tight ? spaced(n.s) : n.s
     case 'sep': return n.kind === 'row' ? '; ' : ' '
-    case 'row': return tidy(n.items.map(i => flat(i, tight)).join(''))
+    case 'row': return joinFlat(n.items, tight)
     case 'frac': {
       const a = flat(n.num, true).trim(), b = flat(n.den, true).trim()
       const vulgar = VULGAR[`${a}/${b}`]
@@ -635,6 +653,20 @@ const BRACKETS: Record<string, [string, string]> = {
 
 function spaced(op: string) { return ` ${op} ` }
 
+// Items as one line. A script with no small letters (∇_θ) is spaced from a
+// letter after it, which would otherwise read as part of it: ∇_θ J, not ∇_θJ.
+function joinFlat(items: Node[], tight: boolean): string {
+  let out = ''
+  let open = false
+  for (const it of items) {
+    const s = flat(it, tight)
+    if (open && /^[\p{L}\p{N}]/u.test(s)) out += ' '
+    out += s
+    if (s) open = it.t === 'scripts' && /[_^][^()\s]$/u.test(s)
+  }
+  return tidy(out)
+}
+
 // Collapse the spaces that operators and source spacing pile up.
 function tidy(s: string) {
   return s.replace(/ {2,}/g, m => (m.length >= 4 ? m : ' ')).replace(/\( /g, '(').replace(/ \)/g, ')')
@@ -662,7 +694,8 @@ function scriptText(n: Node | undefined, table: Record<string, string>, mark: st
 
 function corners(c: Corners) { return scriptText(c.sub, SUB, '_') + scriptText(c.sup, SUP, '^') }
 
-function isAtomic(s: string) { return Array.from(s).length <= 1 || /^[\p{L}\p{N}.]+$/u.test(s) }
+// ∂L and ∇f read as one term, as dx does: ∂L/∂w.
+function isAtomic(s: string) { return Array.from(s).length <= 1 || /^[∂∇]?[\p{L}\p{N}.]+$/u.test(s) }
 function group(s: string) { return isAtomic(s) ? s : `(${s})` }
 
 // ---------------------------------------------------------------- display
@@ -748,7 +781,11 @@ function delim(ch: string, h: number, base: number): Box {
   if (h === 1 || !t) return fit(Array.from({ length: h }, (_, i) => (i === base ? ch : t ? t[1] : ' ')), base)
   const lines = Array.from({ length: h }, (_, i) => (i === 0 ? t[0] : i === h - 1 ? t[2] : t[1]))
   if ((ch === '{' || ch === '}') && h >= 3) lines[Math.floor(h / 2)] = ch === '{' ? '⎨' : '⎬'
-  if ((ch === '⟨' || ch === '⟩') && h !== 3) return fit(Array.from({ length: h }, (_, i) => (i === base ? ch : ' ')), base)
+  // ⟨ of any height: ╱ over the top half, ╲ under the bottom half, ⟨ at an odd middle.
+  if (ch === '⟨' || ch === '⟩') {
+    const [up, down] = ch === '⟨' ? ['╱', '╲'] : ['╲', '╱']
+    return fit(Array.from({ length: h }, (_, i) => (2 * i + 1 === h ? ch : 2 * i < h ? up : down)), base)
+  }
   return fit(lines, base)
 }
 
@@ -780,7 +817,7 @@ function box(n: Node, tight = false): Box {
       let run: Node[] = []
       let afterArrow = false, afterOp = false
       const flush = (beforeArrow = false) => {
-        let s = tidy(run.map(i => flat(i, tight)).join(''))
+        let s = joinFlat(run, tight)
         if (afterArrow) s = s.trimStart()
         if (beforeArrow) s = s.trimEnd()
         if (afterOp && s && !/^[\s,;.:!?)\]}⟩|‖]/.test(s)) s = ' ' + s
@@ -801,6 +838,8 @@ function box(n: Node, tight = false): Box {
       return hcat(out)
     }
     case 'frac': {
+      // \tfrac is the text-size fraction: a/b even in display.
+      if (n.inline) return line(flat(n))
       const num = trimBox(box(n.num, true)), den = trimBox(box(n.den, true))
       // A rule as wide as a fraction inside it would leave which one is the main
       // fraction ambiguous: it then reaches one column past each side.
@@ -892,6 +931,10 @@ function box(n: Node, tight = false): Box {
       const r = line(rule('─', body.w))
       if (n.mark === ACCENTS.overline || n.mark === ACCENTS.bar) return vstack([r, body], body.base + 1)
       if (n.mark === ACCENTS.underline) return vstack([body, r], body.base)
+      // \cancel and \sout strike every character, as they do on one line.
+      if (PER_CHAR_MARKS.has(n.mark)) {
+        return fit(body.lines.map(l => Array.from(l, c => (c === ' ' ? c : c + n.mark)).join('')), body.base)
+      }
       throw new Unsupported('accent over several lines')
     }
     case 'lr': {
@@ -927,6 +970,7 @@ function envBox(n: Extract<Node, { t: 'env' }>, tight: boolean): Box {
   }
   const isMatrix = n.name in BRACKETS
   const isCases = n.name === 'cases' || n.name === 'dcases'
+  const centred = isMatrix || n.name === 'gather' || n.name === 'gathered'
   // An align cell keeps its edges: `&= b` starts with the space before `=`.
   const cells = n.rows.map(r => r.map(c => (isMatrix || isCases ? trimBox(box(c, tight)) : box(c, tight))))
   const cols = Math.max(...cells.map(r => r.length))
@@ -934,7 +978,7 @@ function envBox(n: Extract<Node, { t: 'env' }>, tight: boolean): Box {
   // align: columns alternate right- and left-aligned, with no gap at the &.
   const gap = (c: number) => (c === 0 ? '' : isMatrix ? '  ' : isCases ? '   ' : c % 2 === 1 ? '' : '  ')
   const align = (s: string, c: number) =>
-    isMatrix ? center(s, colW[c]!) : !isCases && c % 2 === 0 && cols > 1 ? ' '.repeat(colW[c]! - width(s)) + s : pad(s, colW[c]!)
+    centred ? center(s, colW[c]!) : !isCases && c % 2 === 0 && cols > 1 ? ' '.repeat(colW[c]! - width(s)) + s : pad(s, colW[c]!)
   const lines: string[] = []
   for (const r of cells) {
     // Cells sit on one baseline: the row is as tall as the most above it plus the most below.
@@ -987,7 +1031,12 @@ export function displayMath(tex: string, opts: Options = {}): string[] {
 
 function drawDisplay(tex: string): string[] {
   const { node, tag } = parse(tex)
-  const b = box(node)
+  // A \\ outside any environment breaks the line, as KaTeX does: the lines are
+  // centred as in gather, or aligned at & as in aligned.
+  const items = node.t === 'row' ? node.items : [node]
+  const lines = items.some(i => i.t === 'sep' && i.kind === 'row')
+  const name = items.some(i => i.t === 'sep' && i.kind === 'col') ? 'aligned' : 'gathered'
+  const b = box(lines ? { t: 'env', name, rows: splitRows(node) } : node)
   return (tag ? hcat([b, line('    ' + tag)]) : b).lines.map(l => unbreak(l).replace(/\s+$/, ''))
 }
 
@@ -997,7 +1046,8 @@ const escapeMd = (s: string) => s.replace(/[\\`*_[\]<>|~#]/g, '\\$&')
 // Inline: $...$ with no space inside its edges, a closing $ not followed by a
 // digit ("$5 and $10" is money, not math), or \(...\). An opening $ after a
 // letter or digit counts only before a script on that word: error$_{k+1}$.
-const MATH = /\$\$([\s\S]+?)\$\$([ \t]*)|\\\[([\s\S]+?)\\\]([ \t]*)|\\\(([\s\S]+?)\\\)|(?:(?<![\\$\w])\$(?![\s$])|(?<=[A-Za-z0-9])\$(?=[_^][^\s$]))((?:\\\$|[^$\n])+?)(?<![\s\\])\$(?![\d$\w])/g
+// A closing $ may run into an ordinal or plural suffix: the $k$th, $n$s.
+const MATH = /\$\$([\s\S]+?)\$\$([ \t]*)|\\\[([\s\S]+?)\\\]([ \t]*)|\\\(([\s\S]+?)\\\)|(?:(?<![\\$\w])\$(?![\s$])|(?<=[A-Za-z0-9])\$(?=[_^][^\s$]))((?:\\\$|[^$\n])+?)(?<![\s\\])\$(?:(?![\d$\w])|(?=(?:th|st|nd|rd|s)(?!\w)))/g
 
 // The start of a line that belongs to markdown, not to its text: indentation,
 // quote marks and list markers.
